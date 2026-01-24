@@ -1,11 +1,15 @@
 """FastAPI web interface for the subway agent."""
 
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from .agent import chat, clear_history
+
+STATIC_DIR = Path(__file__).parent / "static"
 from .stations import find_station, STATIONS
 from .mta_feed import get_arrivals
 from .routing import find_route
@@ -49,6 +53,12 @@ class ArrivalsRequest(BaseModel):
 
 @app.get("/")
 async def root():
+    """Serve the chat interface."""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+async def health():
     """Health check endpoint."""
     return {"status": "ok", "service": "NYC Subway Agent"}
 
