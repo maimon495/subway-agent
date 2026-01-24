@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subway-agent"
+version = "0.1.0"
+description = "AI-powered NYC subway routing assistant using LangGraph"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Subway Agent Team"}
+]
+keywords = ["nyc", "subway", "mta", "langgraph", "ai", "routing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-groq>=0.2.0",
+    "gtfs-realtime-bindings>=1.0.0",
+    "protobuf>=4.25.0",
+    "requests>=2.31.0",
+    "sqlalchemy>=2.0.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+subway-agent = "subway_agent.cli:main"
+subway-api = "subway_agent.api:run_server"
+
+[tool.setuptools.packages.find]
+where = ["src"]
