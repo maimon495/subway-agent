@@ -4,7 +4,7 @@ from typing import Optional
 from langchain_core.tools import tool
 
 from .stations import find_station, find_stations_by_line, STATIONS
-from .mta_feed import get_arrivals
+from .mta_feed import get_arrivals, get_trip_duration
 from .routing import find_route, subway_graph, AVG_TIME_BETWEEN_STOPS, LINE_SEQUENCES
 from .database import db
 
@@ -175,176 +175,16 @@ def get_common_trips() -> str:
     return "\n".join(result)
 
 
-def _find_direct_line_options(from_st, to_st):
-    """Find lines that directly connect origin to destination without transfer."""
-    shared_lines = set(from_st.lines) & set(to_st.lines)
-    direct_options = []
-
-    for line in shared_lines:
-        if line not in LINE_SEQUENCES:
-            continue
-
-        sequence = LINE_SEQUENCES[line]
-        try:
-            from_idx = sequence.index(from_st.id)
-            to_idx = sequence.index(to_st.id)
-            num_stops = abs(to_idx - from_idx)
-            travel_time = num_stops * AVG_TIME_BETWEEN_STOPS
-            direct_options.append({
-                'line': line,
-                'num_stops': num_stops,
-                'travel_time': travel_time
-            })
-        except ValueError:
-            # Station not on this line's sequence
-            continue
-
-    return direct_options
-
-
-def _calculate_transfer_route_time(route, from_st):
-    """Calculate total end-to-end time for a transfer route using real-time arrivals."""
-    cumulative_time = 0
-    transfer_buffer = 2
-
-    for i, seg in enumerate(route.segments):
-        seg_origin_arrivals = get_arrivals(seg.from_station.id, [seg.line])
-
-        if i == 0:
-            # First leg
-            if seg_origin_arrivals:
-                next_train = seg_origin_arrivals[0]
-                cumulative_time = next_train.minutes_until + seg.travel_time_minutes
-            else:
-                cumulative_time = seg.travel_time_minutes  # Assume immediate departure
-        else:
-            # Transfer leg
-            user_arrives_at = cumulative_time
-            min_connection_time = user_arrives_at + transfer_buffer
-
-            connecting_trains = [
-                arr for arr in seg_origin_arrivals
-                if arr.minutes_until >= min_connection_time
-            ]
-
-            if connecting_trains:
-                connection = connecting_trains[0]
-                cumulative_time = connection.minutes_until + seg.travel_time_minutes
-            elif seg_origin_arrivals:
-                # Use latest visible train or estimate
-                cumulative_time = user_arrives_at + 5 + seg.travel_time_minutes
-            else:
-                cumulative_time = user_arrives_at + 5 + seg.travel_time_minutes
-
-    return cumulative_time
-
-
-def _format_direct_route(line, from_st, to_st, next_train_minutes, num_stops, total_time):
-    """Format output for a direct (no transfer) route."""
-    return (
-        f"Take the {line} arriving at {from_st.name} in {next_train_minutes} min.\n"
-        f"You'll reach {to_st.name} in about {total_time} min from now "
-        f"({num_stops} stops, no transfer needed)."
-    )
-
-
-def _format_transfer_route(route, from_st, to_st):
-    """Format output for a transfer route with real-time timing details."""
-    result = []
-    result.append(f"Trip from {from_st.name} to {to_st.name}:\n")
-
-    cumulative_time = 0
-    transfer_buffer = 2
-
-    for i, seg in enumerate(route.segments):
-        is_first_leg = (i == 0)
-        is_last_leg = (i == len(route.segments) - 1)
-        seg_origin_arrivals = get_arrivals(seg.from_station.id, [seg.line])
-
-        if is_first_leg:
-            if not seg_origin_arrivals:
-                result.append(f"Step {i+1}: Take the {seg.line} from {seg.from_station.name} to {seg.to_station.name}")
-                result.append(f"  Warning: No real-time data for {seg.line} at {seg.from_station.name}")
-                cumulative_time += seg.travel_time_minutes
-            else:
-                next_train = seg_origin_arrivals[0]
-                board_time = next_train.minutes_until
-                arrival_at_transfer = board_time + seg.travel_time_minutes
-                cumulative_time = arrival_at_transfer
-
-                result.append(f"Step {i+1}: Take the {seg.line} arriving in {board_time} min")
-                result.append(f"  -> You'll reach {seg.to_station.name} in ~{arrival_at_transfer} min from now")
-        else:
-            user_arrives_at = cumulative_time
-            min_connection_time = user_arrives_at + transfer_buffer
-
-            connecting_trains = [
-                arr for arr in seg_origin_arrivals
-                if arr.minutes_until >= min_connection_time
-            ]
-
-            if not seg_origin_arrivals:
-                result.append(f"\nStep {i+1}: Transfer to {seg.line} at {seg.from_station.name}")
-                result.append(f"  Warning: No real-time data for {seg.line} - can't confirm connection")
-                cumulative_time += 5 + seg.travel_time_minutes
-            elif not connecting_trains:
-                next_available = seg_origin_arrivals[-1]
-                result.append(f"\nStep {i+1}: Transfer to {seg.line} at {seg.from_station.name}")
-                result.append(f"  Warning: Tight connection! You arrive in ~{user_arrives_at} min")
-                result.append(f"  Next {seg.line} visible: {next_available.minutes_until} min")
-                cumulative_time += 5 + seg.travel_time_minutes
-            else:
-                connection = connecting_trains[0]
-                wait_time = connection.minutes_until - user_arrives_at
-                board_time = connection.minutes_until
-                arrival_at_next = board_time + seg.travel_time_minutes
-                cumulative_time = arrival_at_next
-
-                result.append(f"\nStep {i+1}: Transfer to {seg.line} at {seg.from_station.name}")
-                result.append(f"  You arrive at {seg.from_station.name} in ~{user_arrives_at} min")
-                result.append(f"  {seg.line} train arrives in {connection.minutes_until} min - {wait_time} min wait")
-
-                if is_last_leg:
-                    result.append(f"  -> You'll reach {seg.to_station.name} in ~{arrival_at_next} min from now")
-                else:
-                    result.append(f"  -> Reach {seg.to_station.name} in ~{arrival_at_next} min")
-
-                if len(connecting_trains) > 1:
-                    backup = connecting_trains[1]
-                    result.append(f"  Backup: Next {seg.line} in {backup.minutes_until} min if you miss it")
-
-    result.append(f"\nTotal trip time: ~{cumulative_time} min from now")
-    return "\n".join(result)
-
-
-def _describe_transfer_route(route):
-    """Create a short description of a transfer route."""
-    if len(route.segments) < 2:
-        return f"Take the {route.segments[0].line}"
-
-    first_seg = route.segments[0]
-    second_seg = route.segments[1]
-    transfer_station = first_seg.to_station.name
-
-    return f"Transfer to {second_seg.line} at {transfer_station}"
-
-
 @tool
 def plan_trip_with_transfers(from_station: str, to_station: str) -> str:
-    """Plan a trip with real-time transfer timing. Use this for any route that may involve transfers.
-
-    This tool compares route options when a transfer is involved:
-    1. Gets the transfer route from the routing algorithm
-    2. Checks if origin and destination share a common line (direct route possible)
-    3. Calculates real-time end-to-end time for BOTH options
-    4. Returns both options with times, then recommends the faster one
+    """Plan a trip comparing direct and transfer options with real-time data.
 
     Args:
         from_station: The starting station name
         to_station: The destination station name
 
     Returns:
-        Both route options with real-time timing, plus a recommendation
+        Route options with arrival times and a recommendation
     """
     from_st = find_station(from_station)
     to_st = find_station(to_station)
@@ -354,85 +194,122 @@ def plan_trip_with_transfers(from_station: str, to_station: str) -> str:
     if not to_st:
         return f"Could not find station: {to_station}. Try being more specific."
 
-    # Get the transfer route from subway_graph.find_route
-    route = subway_graph.find_route(from_st.id, to_st.id)
-    if not route:
-        return f"Could not find a route from {from_st.name} to {to_st.name}."
-
-    # Record the trip
     db.add_trip(from_st.id, to_st.id)
 
-    # If no transfers in recommended route, just return it with real-time info
-    if len(route.segments) == 1:
-        seg = route.segments[0]
-        origin_arrivals = get_arrivals(from_st.id, [seg.line])
+    direct_option = None  # (line, time, estimated, est_reason)
+    transfer_option = None  # (line1, transfer_station, line2, time, estimated, est_reason)
 
-        if not origin_arrivals:
-            return (
-                f"Route: Take the {seg.line} from {from_st.name} to {to_st.name} "
-                f"({len(seg.stops)-1} stops, ~{seg.travel_time_minutes} min).\n\n"
-                f"Real-time data unavailable for the {seg.line} right now."
-            )
+    # 1. Check for DIRECT route (origin and destination share a line)
+    shared_lines = set(from_st.lines) & set(to_st.lines)
 
-        next_train = origin_arrivals[0]
-        total_time = next_train.minutes_until + seg.travel_time_minutes
+    for line in shared_lines:
+        if line not in LINE_SEQUENCES:
+            continue
 
-        return (
-            f"Take the {seg.line} arriving at {from_st.name} in {next_train.minutes_until} min.\n"
-            f"You'll reach {to_st.name} in about {total_time} min from now "
-            f"({len(seg.stops)-1} stops)."
-        )
+        seq = LINE_SEQUENCES[line]
+        if from_st.id not in seq or to_st.id not in seq:
+            continue
 
-    # Multi-segment route - check if origin and destination share a common line
-    direct_options = _find_direct_line_options(from_st, to_st)
+        from_idx = seq.index(from_st.id)
+        to_idx = seq.index(to_st.id)
+        num_stops = abs(to_idx - from_idx)
 
-    # Calculate real-time end-to-end time for transfer route
-    transfer_total_time = _calculate_transfer_route_time(route, from_st)
-
-    # Calculate real-time end-to-end time for direct options
-    best_direct = None
-    best_direct_time = float('inf')
-
-    for option in direct_options:
-        line = option['line']
         arrivals = get_arrivals(from_st.id, [line])
 
         if arrivals:
-            next_train = arrivals[0]
-            total_time = next_train.minutes_until + option['travel_time']
-
-            if total_time < best_direct_time:
-                best_direct_time = total_time
-                best_direct = {
-                    'line': line,
-                    'next_train_minutes': next_train.minutes_until,
-                    'num_stops': option['num_stops'],
-                    'total_time': total_time
-                }
-
-    # Build response with both options and recommendation
-    result = [f"Route options from {from_st.name} to {to_st.name}:\n"]
-
-    transfer_desc = _describe_transfer_route(route)
-
-    if best_direct:
-        # Present both options
-        result.append(f"Option A: Stay on {best_direct['line']} - {best_direct['total_time']} min")
-        result.append(f"Option B: {transfer_desc} - {transfer_total_time} min")
-
-        # Recommend the faster one
-        result.append("")
-        if best_direct_time < transfer_total_time:
-            result.append(f"Recommendation: Stay on the {best_direct['line']}.")
-        elif transfer_total_time < best_direct_time:
-            result.append(f"Recommendation: {transfer_desc}.")
+            train = arrivals[0]
+            duration = get_trip_duration(from_st.id, to_st.id, train.trip_id)
+            if duration is not None:
+                total = train.minutes_until + duration
+                direct_option = (line, total, False, None)
+            else:
+                est = num_stops * AVG_TIME_BETWEEN_STOPS
+                total = train.minutes_until + est
+                direct_option = (line, total, True, f"{line} train duration unavailable")
         else:
-            result.append(f"Recommendation: Either option - same travel time.")
+            est = num_stops * AVG_TIME_BETWEEN_STOPS
+            direct_option = (line, est, True, f"{line} train data unavailable")
+
+        break  # Use first valid direct line
+
+    # 2. Check for TRANSFER route
+    route = subway_graph.find_route(from_st.id, to_st.id)
+
+    if route and len(route.segments) >= 2:
+        first_seg = route.segments[0]
+        second_seg = route.segments[1]
+        transfer_station = first_seg.to_station
+
+        arrivals = get_arrivals(from_st.id, [first_seg.line])
+        est_reasons = []
+
+        if arrivals:
+            train = arrivals[0]
+
+            leg1_dur = get_trip_duration(from_st.id, transfer_station.id, train.trip_id)
+            if leg1_dur is None:
+                leg1_dur = first_seg.travel_time_minutes
+                est_reasons.append(f"{first_seg.line} train duration unavailable")
+
+            arrive_at_transfer = train.minutes_until + leg1_dur
+
+            transfer_arrivals = get_arrivals(transfer_station.id, [second_seg.line])
+            connecting = [a for a in transfer_arrivals if a.minutes_until >= arrive_at_transfer + 2]
+
+            if connecting:
+                conn = connecting[0]
+                leg2_dur = get_trip_duration(transfer_station.id, to_st.id, conn.trip_id)
+                if leg2_dur is None:
+                    leg2_dur = second_seg.travel_time_minutes
+                    est_reasons.append(f"{second_seg.line} train duration unavailable")
+
+                total = conn.minutes_until + leg2_dur
+                estimated = len(est_reasons) > 0
+                transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, estimated, ", ".join(est_reasons) if est_reasons else None)
+            else:
+                total = arrive_at_transfer + 5 + second_seg.travel_time_minutes
+                est_reasons.append(f"{second_seg.line} connection time unknown")
+                transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, True, ", ".join(est_reasons))
+        else:
+            total = route.total_time_minutes
+            transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, True, f"{first_seg.line} train data unavailable")
+
+    # Build output
+    result = [f"{from_st.name} to {to_st.name}:\n"]
+
+    if not direct_option and not transfer_option:
+        return f"No route options found from {from_st.name} to {to_st.name}."
+
+    # Option 1: Direct (if exists)
+    if direct_option:
+        line, time, estimated, est_reason = direct_option
+        est_label = f" ⚠️ estimated ({est_reason})" if estimated else ""
+        result.append(f"Option 1 (Direct): {line} train to {to_st.name} - arrive in {time} min{est_label}")
+
+    # Option 2: Transfer (if exists)
+    if transfer_option:
+        line1, xfer_station, line2, time, estimated, est_reason = transfer_option
+        opt_num = 2 if direct_option else 1
+        est_label = f" ⚠️ estimated ({est_reason})" if estimated else ""
+        result.append(f"Option {opt_num} (Transfer): {line1} to {xfer_station}, {line2} to {to_st.name} - arrive in {time} min{est_label}")
+
+    # Recommendation
+    result.append("")
+    if direct_option and transfer_option:
+        d_time = direct_option[1]
+        t_time = transfer_option[3]
+        diff = abs(d_time - t_time)
+
+        if d_time < t_time:
+            result.append(f"Recommendation: Take the direct {direct_option[0]} train - saves {diff} min and no transfer risk.")
+        elif t_time < d_time:
+            result.append(f"Recommendation: Transfer via {transfer_option[1]} - saves {diff} min despite the transfer.")
+        else:
+            result.append(f"Recommendation: Take the direct {direct_option[0]} train - same time but no transfer risk.")
+    elif direct_option:
+        result.append(f"Recommendation: Take the {direct_option[0]} train (only option).")
     else:
-        # No direct option available, only show transfer route
-        result.append(f"Option: {transfer_desc} - {transfer_total_time} min")
-        result.append("")
-        result.append("(No direct route available between these stations.)")
+        result.append(f"Recommendation: Transfer at {transfer_option[1]} (no direct route available).")
 
     return "\n".join(result)
 
