@@ -1,19 +1,33 @@
 """FastAPI web interface for the subway agent."""
 
+import os
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from .agent import chat, clear_history
-
-STATIC_DIR = Path(__file__).parent / "static"
 from .stations import find_station, STATIONS
 from .mta_feed import get_arrivals
 from .routing import find_route
 from .database import db
+
+STATIC_DIR = Path(__file__).parent / "static"
+SUBWAY_API_KEY = os.getenv("SUBWAY_API_KEY")
+
+
+async def verify_api_key(
+    key: Optional[str] = Query(None),
+    x_api_key: Optional[str] = Header(None),
+):
+    """Verify API key from query param or header."""
+    provided_key = key or x_api_key
+    if not SUBWAY_API_KEY or provided_key != SUBWAY_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return provided_key
 
 app = FastAPI(
     title="NYC Subway Agent",
@@ -51,20 +65,20 @@ class ArrivalsRequest(BaseModel):
     line: Optional[str] = None
 
 
+@app.get("/health")
+async def health():
+    """Health check endpoint (no auth required)."""
+    return {"status": "ok", "service": "NYC Subway Agent"}
+
+
 @app.get("/")
-async def root():
+async def root(_: str = Depends(verify_api_key)):
     """Serve the chat interface."""
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "ok", "service": "NYC Subway Agent"}
-
-
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, _: str = Depends(verify_api_key)):
     """Chat with the subway agent."""
     try:
         response = chat(request.message, request.user_id)
@@ -74,14 +88,14 @@ async def chat_endpoint(request: ChatRequest):
 
 
 @app.post("/clear")
-async def clear_chat(user_id: str = "default"):
+async def clear_chat(user_id: str = "default", _: str = Depends(verify_api_key)):
     """Clear conversation history."""
     clear_history(user_id)
     return {"status": "cleared", "user_id": user_id}
 
 
 @app.post("/route")
-async def get_route_endpoint(request: RouteRequest):
+async def get_route_endpoint(request: RouteRequest, _: str = Depends(verify_api_key)):
     """Get a route between two stations (direct API, no LLM)."""
     from_st = find_station(request.from_station)
     to_st = find_station(request.to_station)
@@ -114,7 +128,7 @@ async def get_route_endpoint(request: RouteRequest):
 
 
 @app.post("/arrivals")
-async def get_arrivals_endpoint(request: ArrivalsRequest):
+async def get_arrivals_endpoint(request: ArrivalsRequest, _: str = Depends(verify_api_key)):
     """Get real-time arrivals for a station (direct API, no LLM)."""
     station = find_station(request.station)
     if not station:
@@ -138,7 +152,7 @@ async def get_arrivals_endpoint(request: ArrivalsRequest):
 
 
 @app.get("/stations")
-async def list_stations(borough: Optional[str] = None, line: Optional[str] = None):
+async def list_stations(borough: Optional[str] = None, line: Optional[str] = None, _: str = Depends(verify_api_key)):
     """List all stations, optionally filtered."""
     stations = list(STATIONS.values())
 
@@ -163,7 +177,7 @@ async def list_stations(borough: Optional[str] = None, line: Optional[str] = Non
 
 
 @app.get("/preferences/{user_id}")
-async def get_preferences(user_id: str):
+async def get_preferences(user_id: str, _: str = Depends(verify_api_key)):
     """Get all preferences for a user."""
     prefs = db.get_all_preferences(user_id)
     return {"user_id": user_id, "preferences": prefs}

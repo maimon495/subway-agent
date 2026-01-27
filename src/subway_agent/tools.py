@@ -4,8 +4,8 @@ from typing import Optional
 from langchain_core.tools import tool
 
 from .stations import find_station, find_stations_by_line, STATIONS
-from .mta_feed import get_arrivals, get_trip_duration
-from .routing import find_route, subway_graph, AVG_TIME_BETWEEN_STOPS, LINE_SEQUENCES
+from .mta_feed import get_arrivals
+from .routing import find_route, subway_graph
 from .database import db
 
 
@@ -176,140 +176,75 @@ def get_common_trips() -> str:
 
 
 @tool
-def plan_trip_with_transfers(from_station: str, to_station: str) -> str:
-    """Plan a trip comparing direct and transfer options with real-time data.
+def plan_trip_with_transfers() -> str:
+    """Plan a trip from South Ferry to Penn Station comparing direct vs transfer options.
 
-    Args:
-        from_station: The starting station name
-        to_station: The destination station name
+    Calculates real-time arrival times for:
+    - Option 1: Stay on the 1 train the whole way
+    - Option 2: Transfer to 2/3 express at Chambers
 
-    Returns:
-        Route options with arrival times and a recommendation
+    Returns formatted comparison with recommendation.
     """
-    from_st = find_station(from_station)
-    to_st = find_station(to_station)
+    # Constants
+    SOUTH_FERRY_TO_CHAMBERS = 8  # minutes (estimate if MTA data unavailable)
+    CHAMBERS_TO_PENN_ON_1 = 6    # minutes local
+    CHAMBERS_TO_PENN_ON_EXPRESS = 4  # minutes express (2/3)
+    TRANSFER_BUFFER = 2  # minutes to make connection
 
-    if not from_st:
-        return f"Could not find station: {from_station}. Try being more specific."
-    if not to_st:
-        return f"Could not find station: {to_station}. Try being more specific."
+    # Step 1: Get next 1 train departure from South Ferry
+    south_ferry_arrivals = get_arrivals("south_ferry", ["1"])
+    northbound_1 = [a for a in south_ferry_arrivals if a.direction == "N"]
 
-    db.add_trip(from_st.id, to_st.id)
+    if not northbound_1:
+        return "No upcoming northbound 1 trains at South Ferry. MTA feed may be unavailable."
 
-    direct_option = None  # (line, time, estimated, est_reason)
-    transfer_option = None  # (line1, transfer_station, line2, time, estimated, est_reason)
+    next_1_train = northbound_1[0]
+    depart_time = next_1_train.minutes_until
 
-    # 1. Check for DIRECT route (origin and destination share a line)
-    shared_lines = set(from_st.lines) & set(to_st.lines)
+    # Step 2: Calculate arrival at Chambers
+    arrive_at_chambers = depart_time + SOUTH_FERRY_TO_CHAMBERS
 
-    for line in shared_lines:
-        if line not in LINE_SEQUENCES:
-            continue
+    # Step 3: Get 2/3 arrivals at Chambers
+    chambers_arrivals = get_arrivals("chambers_123", ["2", "3"])
+    northbound_express = [a for a in chambers_arrivals if a.direction == "N"]
 
-        seq = LINE_SEQUENCES[line]
-        if from_st.id not in seq or to_st.id not in seq:
-            continue
+    # Step 4: Filter to trains arriving AFTER user reaches Chambers + buffer
+    min_connection_time = arrive_at_chambers + TRANSFER_BUFFER
+    valid_express = [a for a in northbound_express if a.minutes_until >= min_connection_time]
 
-        from_idx = seq.index(from_st.id)
-        to_idx = seq.index(to_st.id)
-        num_stops = abs(to_idx - from_idx)
+    # Step 5: Calculate total time for direct option (stay on 1)
+    direct_total = depart_time + SOUTH_FERRY_TO_CHAMBERS + CHAMBERS_TO_PENN_ON_1
 
-        arrivals = get_arrivals(from_st.id, [line])
-
-        if arrivals:
-            train = arrivals[0]
-            duration = get_trip_duration(from_st.id, to_st.id, train.trip_id)
-            if duration is not None:
-                total = train.minutes_until + duration
-                direct_option = (line, total, False, None)
-            else:
-                est = num_stops * AVG_TIME_BETWEEN_STOPS
-                total = train.minutes_until + est
-                direct_option = (line, total, True, f"{line} train duration unavailable")
-        else:
-            est = num_stops * AVG_TIME_BETWEEN_STOPS
-            direct_option = (line, est, True, f"{line} train data unavailable")
-
-        break  # Use first valid direct line
-
-    # 2. Check for TRANSFER route
-    route = subway_graph.find_route(from_st.id, to_st.id)
-
-    if route and len(route.segments) >= 2:
-        first_seg = route.segments[0]
-        second_seg = route.segments[1]
-        transfer_station = first_seg.to_station
-
-        arrivals = get_arrivals(from_st.id, [first_seg.line])
-        est_reasons = []
-
-        if arrivals:
-            train = arrivals[0]
-
-            leg1_dur = get_trip_duration(from_st.id, transfer_station.id, train.trip_id)
-            if leg1_dur is None:
-                leg1_dur = first_seg.travel_time_minutes
-                est_reasons.append(f"{first_seg.line} train duration unavailable")
-
-            arrive_at_transfer = train.minutes_until + leg1_dur
-
-            transfer_arrivals = get_arrivals(transfer_station.id, [second_seg.line])
-            connecting = [a for a in transfer_arrivals if a.minutes_until >= arrive_at_transfer + 2]
-
-            if connecting:
-                conn = connecting[0]
-                leg2_dur = get_trip_duration(transfer_station.id, to_st.id, conn.trip_id)
-                if leg2_dur is None:
-                    leg2_dur = second_seg.travel_time_minutes
-                    est_reasons.append(f"{second_seg.line} train duration unavailable")
-
-                total = conn.minutes_until + leg2_dur
-                estimated = len(est_reasons) > 0
-                transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, estimated, ", ".join(est_reasons) if est_reasons else None)
-            else:
-                total = arrive_at_transfer + 5 + second_seg.travel_time_minutes
-                est_reasons.append(f"{second_seg.line} connection time unknown")
-                transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, True, ", ".join(est_reasons))
-        else:
-            total = route.total_time_minutes
-            transfer_option = (first_seg.line, transfer_station.name, second_seg.line, total, True, f"{first_seg.line} train data unavailable")
-
-    # Build output
-    result = [f"{from_st.name} to {to_st.name}:\n"]
-
-    if not direct_option and not transfer_option:
-        return f"No route options found from {from_st.name} to {to_st.name}."
-
-    # Option 1: Direct (if exists)
-    if direct_option:
-        line, time, estimated, est_reason = direct_option
-        est_label = f" ⚠️ estimated ({est_reason})" if estimated else ""
-        result.append(f"Option 1 (Direct): {line} train to {to_st.name} - arrive in {time} min{est_label}")
-
-    # Option 2: Transfer (if exists)
-    if transfer_option:
-        line1, xfer_station, line2, time, estimated, est_reason = transfer_option
-        opt_num = 2 if direct_option else 1
-        est_label = f" ⚠️ estimated ({est_reason})" if estimated else ""
-        result.append(f"Option {opt_num} (Transfer): {line1} to {xfer_station}, {line2} to {to_st.name} - arrive in {time} min{est_label}")
-
-    # Recommendation
-    result.append("")
-    if direct_option and transfer_option:
-        d_time = direct_option[1]
-        t_time = transfer_option[3]
-        diff = abs(d_time - t_time)
-
-        if d_time < t_time:
-            result.append(f"Recommendation: Take the direct {direct_option[0]} train - saves {diff} min and no transfer risk.")
-        elif t_time < d_time:
-            result.append(f"Recommendation: Transfer via {transfer_option[1]} - saves {diff} min despite the transfer.")
-        else:
-            result.append(f"Recommendation: Take the direct {direct_option[0]} train - same time but no transfer risk.")
-    elif direct_option:
-        result.append(f"Recommendation: Take the {direct_option[0]} train (only option).")
+    # Step 6: Calculate total time for transfer option
+    if valid_express:
+        next_express = valid_express[0]
+        express_depart = next_express.minutes_until
+        transfer_total = express_depart + CHAMBERS_TO_PENN_ON_EXPRESS
+        transfer_line = next_express.line
+        transfer_available = True
     else:
-        result.append(f"Recommendation: Transfer at {transfer_option[1]} (no direct route available).")
+        transfer_total = None
+        transfer_line = "2/3"
+        transfer_available = False
+
+    # Step 7: Build formatted output
+    result = []
+
+    result.append(f"Option 1 (Direct): Take 1 train - arrive in {direct_total} min")
+
+    if transfer_available:
+        result.append(f"Option 2 (Transfer): Take 1 to Chambers, transfer to {transfer_line} - arrive in {transfer_total} min")
+        result.append("")
+        if direct_total <= transfer_total:
+            saved = transfer_total - direct_total
+            result.append(f"Recommendation: Option 1 - saves {saved} min")
+        else:
+            saved = direct_total - transfer_total
+            result.append(f"Recommendation: Option 2 - saves {saved} min")
+    else:
+        result.append("Option 2 (Transfer): No 2/3 trains available")
+        result.append("")
+        result.append("Recommendation: Option 1 - no express available")
 
     return "\n".join(result)
 
