@@ -5,8 +5,19 @@ from langchain_core.tools import tool
 
 from .stations import find_station, find_stations_by_line, STATIONS
 from .mta_feed import get_arrivals
-from .routing import find_route, subway_graph
+from .routing import find_route, subway_graph, get_travel_time_on_line
 from .database import db
+from .gtfs_static import get_gtfs_parser
+
+# Express lines (faster; fewer stops). Same corridor locals: 1=local with 2,3; 6=local with 4,5; C=local with A; etc.
+EXPRESS_LINES = {"2", "3", "4", "5", "A", "D", "N", "Q"}
+
+
+def _line_label(line: str) -> str:
+    """Return '(express)' or '(local)' for known lines."""
+    if line in EXPRESS_LINES:
+        return " (express)"
+    return " (local)"
 
 
 @tool
@@ -39,11 +50,78 @@ def get_route(from_station: str, to_station: str) -> str:
     result = [f"Route from {from_st.name} to {to_st.name}:\n"]
     for i, seg in enumerate(route.segments, 1):
         stops_text = f"{len(seg.stops)-1} stops" if len(seg.stops) > 2 else "1 stop"
-        result.append(f"{i}. Take the {seg.line} train from {seg.from_station.name} to {seg.to_station.name} ({stops_text})")
+        label = _line_label(seg.line)
+        result.append(f"{i}. Take the {seg.line} train{label} from {seg.from_station.name} to {seg.to_station.name} ({stops_text})")
 
     result.append(f"\nTotal travel time: ~{route.total_time_minutes} minutes")
     if route.transfer_count > 0:
         result.append(f"Transfers: {route.transfer_count}")
+
+    return "\n".join(result)
+
+
+@tool
+def get_route_with_arrivals(from_station: str, to_station: str) -> str:
+    """Get the best route between two stations PLUS real-time next train arrivals at the origin.
+
+    Use this when the user asks for the fastest way 'right now', 'at the moment', or when
+    they want to know when the next train is coming. This combines route info with live
+    MTA arrival data so you can say e.g. 'Take the 4 train (~15 min). Next 4 train in 3 min.'
+
+    Args:
+        from_station: The starting station name (e.g., "Union Square", "Penn Station")
+        to_station: The destination station name
+
+    Returns:
+        Route description plus real-time next train times at the origin for the recommended line(s)
+    """
+    from_st = find_station(from_station)
+    to_st = find_station(to_station)
+
+    if not from_st:
+        return f"Could not find station: {from_station}. Try being more specific."
+    if not to_st:
+        return f"Could not find station: {to_station}. Try being more specific."
+
+    route = subway_graph.find_route(from_st.id, to_st.id)
+    if not route:
+        return f"Could not find a route from {from_st.name} to {to_st.name}."
+
+    db.add_trip(from_st.id, to_st.id)
+
+    # Build route text
+    result = [f"Route from {from_st.name} to {to_st.name}:\n"]
+    for i, seg in enumerate(route.segments, 1):
+        stops_text = f"{len(seg.stops)-1} stops" if len(seg.stops) > 2 else "1 stop"
+        label = _line_label(seg.line)
+        result.append(f"{i}. Take the {seg.line} train{label} from {seg.from_station.name} to {seg.to_station.name} ({stops_text})")
+    result.append(f"\nTotal travel time: ~{route.total_time_minutes} minutes")
+    if route.transfer_count > 0:
+        result.append(f"Transfers: {route.transfer_count}")
+    # Single recommended first step so the agent doesn't say "4 or 6" when the best route is one of them
+    first_line = route.segments[0].line
+    result.append(f"\nRecommended: Take the {first_line} train first (this is the fastest option).")
+
+    # Get real-time arrivals at origin for the line(s) on the first segment
+    first_seg = route.segments[0]
+    lines_needed = [first_seg.line]
+    # Infer direction: northbound if destination is north of origin (higher latitude)
+    going_north = first_seg.to_station.latitude > first_seg.from_station.latitude
+    want_direction = "N" if going_north else "S"
+
+    arrivals = get_arrivals(from_st.id, lines_needed)
+    # Filter to the direction the user is traveling
+    relevant = [a for a in arrivals if a.direction == want_direction]
+    if not relevant:
+        relevant = arrivals[:6]  # fallback: show any direction
+
+    if relevant:
+        result.append("\nReal-time next trains at " + from_st.name + ":")
+        dir_label = "Uptown/Bronx" if want_direction == "N" else "Downtown/Brooklyn"
+        for arr in relevant[:5]:
+            result.append(f"  {arr.line} train ({dir_label}): {arr.minutes_until} min")
+    else:
+        result.append("\nReal-time arrivals: MTA feed unavailable. Check signs at the station for next train times.")
 
     return "\n".join(result)
 
@@ -175,88 +253,215 @@ def get_common_trips() -> str:
     return "\n".join(result)
 
 
+TRANSFER_BUFFER_MIN = 1
+
+
+@tool
+def compare_local_vs_express(
+    from_station: str,
+    to_station: str,
+    transfer_station: str,
+    local_line: str,
+    express_lines: str,
+) -> str:
+    """Compare staying on a local train vs transferring to an express, using real-time arrivals. Works for any route (e.g. South Ferry→Penn 1 vs 2/3 at Chambers; 14th St→96th St 6 vs 4/5 at 14th).
+
+    Args:
+        from_station: Origin (e.g. "South Ferry", "14th St")
+        to_station: Destination (e.g. "Penn Station", "96th St")
+        transfer_station: Where to transfer, or same as from_station if comparing trains at one station (e.g. "Chambers St", "14th St")
+        local_line: Local/slower line (e.g. "1", "6")
+        express_lines: Comma-separated express lines (e.g. "2,3", "4,5")
+
+    Returns:
+        Next local departure, Option 1 (stay on local) total min, Option 2 (transfer to express) total min, wait at transfer, recommendation.
+    """
+    from_st = find_station(from_station)
+    to_st = find_station(to_station)
+    xfer_st = find_station(transfer_station)
+    if not from_st or not to_st or not xfer_st:
+        return f"Could not find station(s). Check: from={from_station}, to={to_station}, transfer={transfer_station}."
+
+    express_list = [s.strip().upper() for s in express_lines.split(",")]
+    going_north = to_st.latitude > from_st.latitude
+    want_direction = "N" if going_north else "S"
+
+    time_origin_to_xfer_local = get_travel_time_on_line(from_st.id, xfer_st.id, local_line)
+    time_origin_to_dest_local = get_travel_time_on_line(from_st.id, to_st.id, local_line)
+    if time_origin_to_dest_local is None:
+        return f"No path on {local_line} from {from_st.name} to {to_st.name}. Check station names and line."
+    if from_st.id != xfer_st.id and (time_origin_to_xfer_local is None or time_origin_to_xfer_local <= 0):
+        return f"No path on {local_line} from {from_st.name} to {transfer_station}. Check station names."
+
+    time_xfer_to_dest_express = None
+    for ex in express_list:
+        t = get_travel_time_on_line(xfer_st.id, to_st.id, ex)
+        if t is not None:
+            time_xfer_to_dest_express = t
+            break
+    if time_xfer_to_dest_express is None:
+        return f"No path on express {express_lines} from {transfer_station} to {to_st.name}. Check station names."
+
+    local_arrivals = get_arrivals(from_st.id, [local_line])
+    local_same_dir = [a for a in local_arrivals if a.direction == want_direction]
+    if not local_same_dir:
+        return f"No upcoming {local_line} train ({'Uptown' if want_direction == 'N' else 'Downtown'}) at {from_st.name}. MTA feed may be unavailable."
+    next_local = local_same_dir[0]
+    depart_wait = next_local.minutes_until
+
+    direct_total = depart_wait + time_origin_to_dest_local
+
+    same_station = from_st.id == xfer_st.id
+    if same_station:
+        xfer_arrivals = get_arrivals(xfer_st.id, express_list)
+        xfer_same_dir = [a for a in xfer_arrivals if a.direction == want_direction]
+        catchable = xfer_same_dir[:1] if xfer_same_dir else []
+        arrive_at_xfer = depart_wait
+        min_connection = depart_wait + TRANSFER_BUFFER_MIN
+    else:
+        arrive_at_xfer = depart_wait + (time_origin_to_xfer_local or 0)
+        min_connection = arrive_at_xfer + TRANSFER_BUFFER_MIN
+        xfer_arrivals = get_arrivals(xfer_st.id, express_list)
+        xfer_same_dir = [a for a in xfer_arrivals if a.direction == want_direction]
+        catchable = [a for a in xfer_same_dir if a.minutes_until >= min_connection]
+
+    if not catchable:
+        result = [
+            f"Next {local_line} train at {from_st.name}: {depart_wait} min",
+            "",
+            f"Option 1 (Stay on {local_line}): arrive at {to_st.name} in {direct_total} min",
+            f"Option 2 (Transfer to {express_lines} at {transfer_station}): no {express_lines} train you can catch in time.",
+            "",
+            f"Recommendation: Stay on the {local_line}.",
+        ]
+        return "\n".join(result)
+
+    next_express = catchable[0]
+    express_depart_min = next_express.minutes_until
+    transfer_total = express_depart_min + time_xfer_to_dest_express
+    wait_at_xfer = max(0, express_depart_min - arrive_at_xfer - (0 if same_station else TRANSFER_BUFFER_MIN))
+
+    result = [
+        f"Next {local_line} train at {from_st.name}: {depart_wait} min",
+        "",
+        f"Option 1 (Stay on {local_line}): arrive at {to_st.name} in {direct_total} min",
+        f"Option 2 (Transfer to {next_express.line} at {transfer_station}): arrive at {to_st.name} in {transfer_total} min",
+        f"  If you transfer: next {express_lines} you can catch in {express_depart_min} min; wait at {transfer_station}: {wait_at_xfer} min.",
+        "",
+    ]
+    if direct_total <= transfer_total:
+        result.append(f"Recommendation: Stay on the {local_line} (saves {transfer_total - direct_total} min).")
+    else:
+        result.append(f"Recommendation: Transfer to {express_lines} at {transfer_station} (saves {direct_total - transfer_total} min).")
+    return "\n".join(result)
+
+
 @tool
 def plan_trip_with_transfers() -> str:
-    """Plan a trip from South Ferry to Penn Station comparing direct vs transfer options.
+    """South Ferry to Penn Station: stay on 1 vs transfer to 2/3 at Chambers. Convenience wrapper for compare_local_vs_express.
 
-    Calculates real-time arrival times for:
-    - Option 1: Stay on the 1 train the whole way
-    - Option 2: Transfer to 2/3 express at Chambers
-
-    Returns formatted comparison with recommendation.
+    USE THIS only for South Ferry → Penn Station (or "South Ferry to Penn" / "South Ferry uptown").
+    For other routes (e.g. 14th St → 96th St: 6 vs 4/5), use compare_local_vs_express instead with the right from/to/transfer/local/express.
     """
-    # Constants
-    SOUTH_FERRY_TO_CHAMBERS = 8  # minutes (estimate if MTA data unavailable)
-    CHAMBERS_TO_PENN_ON_1 = 6    # minutes local
-    CHAMBERS_TO_PENN_ON_EXPRESS = 4  # minutes express (2/3)
-    TRANSFER_BUFFER = 2  # minutes to make connection
+    return compare_local_vs_express.invoke({
+        "from_station": "South Ferry",
+        "to_station": "Penn Station",
+        "transfer_station": "Chambers St",
+        "local_line": "1",
+        "express_lines": "2,3",
+    })
 
-    # Step 1: Get next 1 train departure from South Ferry
-    south_ferry_arrivals = get_arrivals("south_ferry", ["1"])
-    northbound_1 = [a for a in south_ferry_arrivals if a.direction == "N"]
 
-    if not northbound_1:
-        return "No upcoming northbound 1 trains at South Ferry. MTA feed may be unavailable."
+@tool
+def get_transfer_timing(from_station: str, to_station: str) -> str:
+    """Get real-time transfer timing: if you take the next train from origin, when do you arrive at the transfer and how long until the next train on the next leg?
 
-    next_1_train = northbound_1[0]
-    depart_time = next_1_train.minutes_until
+    Use this when the user asks about transfer timing in context of a route you already gave, e.g.:
+    - 'If I get on the next N train, what is the timing of the transfer?'
+    - 'How long do I wait at Times Square?'
+    - 'When do I get to the transfer and when is the next 1 train?'
 
-    # Step 2: Calculate arrival at Chambers
-    arrive_at_chambers = depart_time + SOUTH_FERRY_TO_CHAMBERS
+    Args:
+        from_station: Origin (e.g. 'Union Square', '14th St')
+        to_station: Destination (e.g. 'Lincoln Center', '66th St')
 
-    # Step 3: Get 2/3 arrivals at Chambers
-    chambers_arrivals = get_arrivals("chambers_123", ["2", "3"])
-    northbound_express = [a for a in chambers_arrivals if a.direction == "N"]
+    Returns:
+        Next train at origin, travel time to transfer, arrival at transfer, next train you can catch at transfer, wait time, and time to destination.
+    """
+    from_st = find_station(from_station)
+    to_st = find_station(to_station)
+    if not from_st or not to_st:
+        return f"Could not find station(s). Check: from={from_station}, to={to_station}."
 
-    # Step 4: Filter to trains arriving AFTER user reaches Chambers + buffer
-    min_connection_time = arrive_at_chambers + TRANSFER_BUFFER
-    valid_express = [a for a in northbound_express if a.minutes_until >= min_connection_time]
+    route = subway_graph.find_route(from_st.id, to_st.id)
+    if not route:
+        return f"Could not find a route from {from_st.name} to {to_st.name}."
 
-    # Step 5: Calculate total time for direct option (stay on 1)
-    direct_total = depart_time + SOUTH_FERRY_TO_CHAMBERS + CHAMBERS_TO_PENN_ON_1
+    if route.transfer_count == 0:
+        travel = get_travel_time_on_line(from_st.id, to_st.id, route.segments[0].line)
+        arrivals = get_arrivals(from_st.id, [route.segments[0].line])
+        going_north = to_st.latitude > from_st.latitude
+        want_direction = "N" if going_north else "S"
+        relevant = [a for a in arrivals if a.direction == want_direction]
+        if not relevant:
+            return f"No transfer on this route (direct {route.segments[0].line}). Next {route.segments[0].line} at {from_st.name}: MTA feed unavailable."
+        next_min = relevant[0].minutes_until
+        return f"No transfer. Direct {route.segments[0].line} from {from_st.name} to {to_st.name}. Next {route.segments[0].line} in {next_min} min; travel ~{travel or 0} min. Total ~{next_min + (travel or 0)} min."
 
-    # Step 6: Calculate total time for transfer option
-    if valid_express:
-        next_express = valid_express[0]
-        express_depart = next_express.minutes_until
-        transfer_total = express_depart + CHAMBERS_TO_PENN_ON_EXPRESS
-        transfer_line = next_express.line
-        transfer_available = True
-    else:
-        transfer_total = None
-        transfer_line = "2/3"
-        transfer_available = False
+    seg1, seg2 = route.segments[0], route.segments[1]
+    xfer_st = seg1.to_station
+    first_line, second_line = seg1.line, seg2.line
+    going_north = to_st.latitude > from_st.latitude
+    want_direction = "N" if going_north else "S"
 
-    # Step 7: Build formatted output
-    result = []
+    arrivals1 = get_arrivals(from_st.id, [first_line])
+    relevant1 = [a for a in arrivals1 if a.direction == want_direction]
+    if not relevant1:
+        return f"No upcoming {first_line} train at {from_st.name}. MTA feed may be unavailable."
 
-    result.append(f"Option 1 (Direct): Take 1 train - arrive in {direct_total} min")
+    next_depart_min = relevant1[0].minutes_until
+    travel_to_xfer = get_travel_time_on_line(from_st.id, xfer_st.id, first_line)
+    if travel_to_xfer is None:
+        travel_to_xfer = 0
+    arrive_at_xfer_min = next_depart_min + travel_to_xfer
+    min_connection = arrive_at_xfer_min + TRANSFER_BUFFER_MIN
 
-    if transfer_available:
-        result.append(f"Option 2 (Transfer): Take 1 to Chambers, transfer to {transfer_line} - arrive in {transfer_total} min")
-        result.append("")
-        if direct_total <= transfer_total:
-            saved = transfer_total - direct_total
-            result.append(f"Recommendation: Option 1 - saves {saved} min")
-        else:
-            saved = direct_total - transfer_total
-            result.append(f"Recommendation: Option 2 - saves {saved} min")
-    else:
-        result.append("Option 2 (Transfer): No 2/3 trains available")
-        result.append("")
-        result.append("Recommendation: Option 1 - no express available")
+    arrivals2 = get_arrivals(xfer_st.id, [second_line])
+    relevant2 = [a for a in arrivals2 if a.direction == want_direction]
+    catchable = [a for a in relevant2 if a.minutes_until >= min_connection]
+    if not catchable:
+        result = [
+            f"Next {first_line} at {from_st.name}: {next_depart_min} min.",
+            f"Travel to {xfer_st.name}: ~{travel_to_xfer} min. You arrive at the transfer ~{arrive_at_xfer_min} min from now.",
+            f"No {second_line} train you can catch in time at {xfer_st.name}. Next {second_line} times: " + ", ".join(f"{a.minutes_until} min" for a in relevant2[:3]) if relevant2 else "MTA feed unavailable.",
+        ]
+        return "\n".join(result)
 
+    next_second = catchable[0]
+    wait_at_xfer = max(0, next_second.minutes_until - arrive_at_xfer_min)
+    travel_leg2 = get_travel_time_on_line(xfer_st.id, to_st.id, second_line) or 0
+    total_from_now = next_second.minutes_until + travel_leg2
+
+    result = [
+        f"Next {first_line} at {from_st.name}: {next_depart_min} min.",
+        f"Travel to {xfer_st.name}: ~{travel_to_xfer} min. You arrive at the transfer ~{arrive_at_xfer_min} min from now.",
+        f"Next {second_line} you can catch at {xfer_st.name}: in {next_second.minutes_until} min (wait ~{wait_at_xfer} min at transfer).",
+        f"Then ~{travel_leg2} min to {to_st.name}. Total to destination: ~{total_from_now} min from now.",
+    ]
     return "\n".join(result)
 
 
 # List of all tools for the agent
 ALL_TOOLS = [
     get_route,
+    get_route_with_arrivals,
     get_train_arrivals,
     get_station_info,
     find_stations_on_line,
     save_preference,
     get_preference,
     get_common_trips,
+    compare_local_vs_express,
     plan_trip_with_transfers,
+    get_transfer_timing,
 ]

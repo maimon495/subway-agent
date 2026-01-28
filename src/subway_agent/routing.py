@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import heapq
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
 from .stations import STATIONS, Station, find_station
+from .gtfs_static import get_gtfs_parser
 
 
 @dataclass
@@ -37,7 +39,7 @@ class Route:
         return "\n".join(result)
 
 
-# Average travel time between stations (in minutes)
+# Average travel time between stations (in minutes) - fallback if GTFS data unavailable
 AVG_TIME_BETWEEN_STOPS = 2
 TRANSFER_TIME = 5  # minutes to transfer between lines
 
@@ -223,6 +225,15 @@ class SubwayGraph:
 
     def __init__(self):
         self.adjacency: dict[str, list[tuple[str, str, int]]] = {}  # station_id -> [(neighbor_id, line, time)]
+        self.gtfs_parser = None
+        try:
+            self.gtfs_parser = get_gtfs_parser()
+            if self.gtfs_parser:
+                print("Using GTFS static data for travel times")
+            else:
+                print("Warning: Could not load GTFS data, using estimates")
+        except Exception as e:
+            print(f"Warning: Could not load GTFS data, using estimates: {e}")
         self._build_graph()
 
     def _build_graph(self):
@@ -242,10 +253,32 @@ class SubwayGraph:
         # Add transfer edges
         self._add_transfers()
 
-    def _add_edge(self, from_id: str, to_id: str, line: str, time: int = AVG_TIME_BETWEEN_STOPS):
-        """Add an edge to the graph."""
+    def _add_edge(self, from_id: str, to_id: str, line: str, time: Optional[int] = None):
+        """Add an edge to the graph with travel time from GTFS or estimate."""
         if from_id not in self.adjacency:
             self.adjacency[from_id] = []
+        
+        # Try to get real travel time from GTFS
+        if time is None:
+            if self.gtfs_parser and from_id in STATIONS and to_id in STATIONS:
+                from_station = STATIONS[from_id]
+                to_station = STATIONS[to_id]
+                
+                # Try to get travel time for this specific route
+                travel_minutes = self.gtfs_parser.get_travel_time_minutes(
+                    from_station.gtfs_stop_id,
+                    to_station.gtfs_stop_id,
+                    route_id=line
+                )
+                
+                if travel_minutes is not None:
+                    time = travel_minutes
+                else:
+                    # Fallback to estimate
+                    time = AVG_TIME_BETWEEN_STOPS
+            else:
+                time = AVG_TIME_BETWEEN_STOPS
+        
         self.adjacency[from_id].append((to_id, line, time))
 
     def _add_transfers(self):
@@ -304,7 +337,7 @@ class SubwayGraph:
         return None
 
     def _build_route(self, path: list[tuple[str, str]]) -> Route:
-        """Convert path to Route object with segments."""
+        """Convert path to Route object with segments using real GTFS travel times."""
         if not path:
             return None
 
@@ -318,12 +351,14 @@ class SubwayGraph:
                 # End current segment
                 segment_stations = [STATIONS[path[j][0]] for j in range(segment_start, i)]
                 if len(segment_stations) > 1:
+                    # Calculate total travel time for this segment using GTFS or estimates
+                    travel_time = self._calculate_segment_time(segment_stations, current_line)
                     segments.append(RouteSegment(
                         line=current_line,
                         from_station=segment_stations[0],
                         to_station=segment_stations[-1],
                         stops=segment_stations,
-                        travel_time_minutes=(len(segment_stations) - 1) * AVG_TIME_BETWEEN_STOPS
+                        travel_time_minutes=travel_time
                     ))
                 segment_start = i - 1  # Include transfer station
                 current_line = line
@@ -331,12 +366,13 @@ class SubwayGraph:
         # Add final segment
         segment_stations = [STATIONS[path[j][0]] for j in range(segment_start, len(path))]
         if len(segment_stations) > 1:
+            travel_time = self._calculate_segment_time(segment_stations, current_line)
             segments.append(RouteSegment(
                 line=current_line,
                 from_station=segment_stations[0],
                 to_station=segment_stations[-1],
                 stops=segment_stations,
-                travel_time_minutes=(len(segment_stations) - 1) * AVG_TIME_BETWEEN_STOPS
+                travel_time_minutes=travel_time
             ))
 
         total_time = sum(seg.travel_time_minutes for seg in segments)
@@ -348,6 +384,66 @@ class SubwayGraph:
             total_time_minutes=total_time,
             transfer_count=transfer_count
         )
+
+    def _calculate_segment_time(self, stations: list[Station], line: str) -> int:
+        """Calculate total travel time for a segment using GTFS data or estimates.
+        
+        Args:
+            stations: List of stations in order
+            line: Route line ID
+            
+        Returns:
+            Total travel time in minutes
+        """
+        if len(stations) < 2:
+            return 0
+        
+        if self.gtfs_parser:
+            # Sum up travel times between consecutive stations using GTFS data
+            total_seconds = 0
+            for i in range(len(stations) - 1):
+                from_station = stations[i]
+                to_station = stations[i + 1]
+                
+                travel_seconds = self.gtfs_parser.get_travel_time(
+                    from_station.gtfs_stop_id,
+                    to_station.gtfs_stop_id,
+                    route_id=line
+                )
+                
+                if travel_seconds is not None:
+                    total_seconds += travel_seconds
+                else:
+                    # Fallback to estimate for this segment
+                    total_seconds += AVG_TIME_BETWEEN_STOPS * 60
+            
+            return round(total_seconds / 60)
+        else:
+            # Fallback to estimate
+            return (len(stations) - 1) * AVG_TIME_BETWEEN_STOPS
+
+    def get_travel_time_on_line(
+        self, from_station_id: str, to_station_id: str, line: str
+    ) -> Optional[int]:
+        """Travel time in minutes from A to B staying on one line. Returns None if no path on that line."""
+        if from_station_id == to_station_id:
+            return 0
+        if from_station_id not in self.adjacency or to_station_id not in self.adjacency:
+            return None
+        # BFS from from_station_id following only edges with this line
+        q = deque([(from_station_id, 0)])
+        seen = {from_station_id}
+        while q:
+            current, total_time = q.popleft()
+            for neighbor, edge_line, edge_time in self.adjacency.get(current, []):
+                if edge_line != line:
+                    continue
+                if neighbor == to_station_id:
+                    return total_time + edge_time
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    q.append((neighbor, total_time + edge_time))
+        return None
 
     def find_routes(
         self, from_station_id: str, to_station_id: str, max_results: int = 3
@@ -379,3 +475,8 @@ def find_route(from_name: str, to_name: str) -> Optional[Route]:
         return None
 
     return subway_graph.find_route(from_station.id, to_station.id)
+
+
+def get_travel_time_on_line(from_station_id: str, to_station_id: str, line: str) -> Optional[int]:
+    """Travel time in minutes from A to B on one line. None if no path on that line."""
+    return subway_graph.get_travel_time_on_line(from_station_id, to_station_id, line)

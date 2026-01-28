@@ -10,10 +10,14 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "subway_agent.db"
+DATA_DIR.mkdir(parents=True, exist_ok=True)  # Ensure data directory exists
 
 # Groq API
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = "llama-3.3-70b-versatile"
+
+# MTA real-time API (optional; MTA says keys no longer required for subway feeds)
+MTA_API_KEY = os.getenv("MTA_API_KEY")
 
 # MTA GTFS-realtime feed URLs
 MTA_FEEDS = {

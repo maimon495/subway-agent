@@ -10,7 +10,7 @@ from typing import Optional
 import requests
 from google.transit import gtfs_realtime_pb2
 
-from .config import MTA_FEEDS, LINE_TO_FEED
+from .config import MTA_FEEDS, LINE_TO_FEED, MTA_API_KEY
 from .stations import STATIONS, Station
 
 
@@ -46,7 +46,10 @@ class MTAFeedParser:
                 return cached_data
 
         try:
-            response = requests.get(feed_url, timeout=10)
+            headers = {}
+            if MTA_API_KEY:
+                headers["x-api-key"] = MTA_API_KEY
+            response = requests.get(feed_url, timeout=10, headers=headers)
             response.raise_for_status()
 
             feed = gtfs_realtime_pb2.FeedMessage()

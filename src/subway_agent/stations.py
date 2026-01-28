@@ -25,7 +25,7 @@ class Station:
 # Format: id, name, lines, gtfs_stop_id, lat, lon, borough
 STATIONS_DATA = [
     # Manhattan - Lower
-    ("south_ferry", "South Ferry", ["1"], "142", 40.7019, -74.0130, "Manhattan"),
+    ("south_ferry", "South Ferry", ["1", "2", "3"], "142", 40.7019, -74.0130, "Manhattan"),
     ("whitehall", "Whitehall St-South Ferry", ["R", "W"], "R27", 40.7031, -74.0129, "Manhattan"),
     ("bowling_green", "Bowling Green", ["4", "5"], "420", 40.7046, -74.0140, "Manhattan"),
     ("wall_st_23", "Wall St", ["2", "3"], "137", 40.7069, -74.0100, "Manhattan"),
@@ -376,6 +376,10 @@ STATION_ALIASES: dict[str, str] = {
     "86th st": "86th_1",
     "96th street": "96th_123",
     "96th st": "96th_123",
+    "96th st east": "96th_6",
+    "96th st lexington": "96th_6",
+    "96th street east": "96th_6",
+    "96th street lexington": "96th_6",
     "125th street": "125th_1",
     "125th st": "125th_1",
     "harlem": "125th_abc",
