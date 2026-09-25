@@ -1,0 +1,809 @@
+{
+ "103rd_1": [
+  "119"
+ ],
+ "103rd_6": [
+  "624"
+ ],
+ "103rd_bc": [
+  "A18"
+ ],
+ "103rd_corona": [
+  "706"
+ ],
+ "110th_1": [
+  "118"
+ ],
+ "110th_bc": [
+  "A17"
+ ],
+ "111th_st": [
+  "705"
+ ],
+ "116th_1": [
+  "117"
+ ],
+ "116th_6": [
+  "622"
+ ],
+ "116th_bc": [
+  "A16"
+ ],
+ "125th_1": [
+  "116"
+ ],
+ "125th_23": [
+  "225"
+ ],
+ "125th_456": [
+  "621"
+ ],
+ "125th_abc": [
+  "A15"
+ ],
+ "135th_23": [
+  "224"
+ ],
+ "135th_bc": [
+  "A14"
+ ],
+ "137th": [
+  "115"
+ ],
+ "138th_grand": [
+  "416"
+ ],
+ "145th_1": [
+  "114"
+ ],
+ "145th_3": [
+  "302"
+ ],
+ "145th_acd": [
+  "A12",
+  "D13"
+ ],
+ "149th_grand": [
+  "415",
+  "222"
+ ],
+ "14th_123": [
+  "132"
+ ],
+ "14th_fm": [
+  "D19"
+ ],
+ "14th_l_6th": [
+  "L02"
+ ],
+ "155th_ac": [
+  "A11"
+ ],
+ "155th_bd": [
+  "D12"
+ ],
+ "157th": [
+  "113"
+ ],
+ "15th_prospect": [
+  "F25"
+ ],
+ "163rd_1": [
+  "A10"
+ ],
+ "167th": [
+  "413"
+ ],
+ "168th_1": [
+  "112"
+ ],
+ "168th_ac": [
+  "A09"
+ ],
+ "170th": [
+  "412"
+ ],
+ "175th": [
+  "A07"
+ ],
+ "176th": [
+  "410"
+ ],
+ "181st_1": [
+  "111"
+ ],
+ "181st_a": [
+  "A06"
+ ],
+ "182nd_183rd": [
+  "D06"
+ ],
+ "183rd": [
+  "408"
+ ],
+ "190th": [
+  "A05"
+ ],
+ "191st": [
+  "110"
+ ],
+ "1st_av_l": [
+  "L06"
+ ],
+ "207th": [
+  "108"
+ ],
+ "215th": [
+  "107"
+ ],
+ "219th": [
+  "207"
+ ],
+ "225th": [
+  "206"
+ ],
+ "233rd": [
+  "205"
+ ],
+ "23rd_1": [
+  "131"
+ ],
+ "23rd_6": [
+  "634"
+ ],
+ "23rd_ce": [
+  "A30"
+ ],
+ "23rd_fm": [
+  "D18"
+ ],
+ "23rd_nrw": [
+  "R19"
+ ],
+ "28th_1": [
+  "130"
+ ],
+ "28th_6": [
+  "633"
+ ],
+ "28th_nrw": [
+  "R18"
+ ],
+ "30th_av": [
+  "R04"
+ ],
+ "33rd_6": [
+  "632"
+ ],
+ "33rd_rawson": [
+  "716"
+ ],
+ "34th_herald": [
+  "R17",
+  "D17"
+ ],
+ "34th_penn_123": [
+  "128"
+ ],
+ "34th_penn_ace": [
+  "A28"
+ ],
+ "36th_av": [
+  "R06"
+ ],
+ "39th_av": [
+  "R08"
+ ],
+ "3rd_av_138": [
+  "619"
+ ],
+ "3rd_av_149": [
+  "221"
+ ],
+ "3rd_av_l": [
+  "L05"
+ ],
+ "40th_lowery": [
+  "715"
+ ],
+ "42nd_bryant": [
+  "D16"
+ ],
+ "42nd_port_auth": [
+  "A27"
+ ],
+ "42nd_times_sq": [
+  "725",
+  "127",
+  "902",
+  "R16"
+ ],
+ "46th_bliss": [
+  "714"
+ ],
+ "46th_st": [
+  "G18"
+ ],
+ "47_50_rock": [
+  "D15"
+ ],
+ "49th": [
+  "R15"
+ ],
+ "50th_1": [
+  "126"
+ ],
+ "50th_ce": [
+  "A25"
+ ],
+ "51st": [
+  "630"
+ ],
+ "52nd_lincoln": [
+  "713"
+ ],
+ "53rd_lex": [
+  "F11"
+ ],
+ "57th_f": [
+  "B10"
+ ],
+ "57th_nqrw": [
+  "R14"
+ ],
+ "59th_456": [
+  "629"
+ ],
+ "59th_columbus": [
+  "A24",
+  "125"
+ ],
+ "59th_nqrw": [
+  "R11",
+  "B08"
+ ],
+ "5th_53rd": [
+  "F12"
+ ],
+ "61st_woodside": [
+  "712"
+ ],
+ "63rd_drive": [
+  "G10"
+ ],
+ "65th_st": [
+  "G15"
+ ],
+ "66th_lincoln": [
+  "124"
+ ],
+ "67th_av": [
+  "G09"
+ ],
+ "69th_fisk": [
+  "711"
+ ],
+ "6th_av_l": [
+  "L02"
+ ],
+ "72nd_123": [
+  "123"
+ ],
+ "72nd_bc": [
+  "A22"
+ ],
+ "72nd_q": [
+  "Q03"
+ ],
+ "74th_broadway": [
+  "710"
+ ],
+ "77th": [
+  "627"
+ ],
+ "79th": [
+  "122"
+ ],
+ "7th_av_fg": [
+  "F24"
+ ],
+ "81st_museum": [
+  "A21"
+ ],
+ "82nd_jackson": [
+  "709"
+ ],
+ "86th_1": [
+  "121"
+ ],
+ "86th_456": [
+  "626"
+ ],
+ "86th_bc": [
+  "A20"
+ ],
+ "86th_q": [
+  "Q04"
+ ],
+ "8th_av_l": [
+  "L01",
+  "A31"
+ ],
+ "8th_nyu": [
+  "R21"
+ ],
+ "90th_elmhurst": [
+  "708"
+ ],
+ "96th_123": [
+  "120"
+ ],
+ "96th_6": [
+  "625"
+ ],
+ "96th_bc": [
+  "A19"
+ ],
+ "96th_q": [
+  "Q05"
+ ],
+ "allerton": [
+  "210"
+ ],
+ "astor_place": [
+  "636"
+ ],
+ "astoria_blvd": [
+  "R03"
+ ],
+ "astoria_ditmars": [
+  "R01"
+ ],
+ "atlantic_barclays": [
+  "R31",
+  "235",
+  "D24"
+ ],
+ "baychester": [
+  "502"
+ ],
+ "bedford_l": [
+  "L08"
+ ],
+ "bedford_nostrand": [
+  "G33"
+ ],
+ "bedford_park_4": [
+  "405"
+ ],
+ "bedford_park_bd": [
+  "D03"
+ ],
+ "bergen": [
+  "235"
+ ],
+ "bergen_fg": [
+  "G36"
+ ],
+ "beverley_rd": [
+  "245"
+ ],
+ "bleecker": [
+  "637"
+ ],
+ "borough_hall": [
+  "232",
+  "423"
+ ],
+ "bowling_green": [
+  "420"
+ ],
+ "briarwood": [
+  "F05"
+ ],
+ "broadway_g": [
+  "G30"
+ ],
+ "broadway_lafayette": [
+  "D21"
+ ],
+ "broadway_nw": [
+  "R05"
+ ],
+ "bronx_park_east": [
+  "212"
+ ],
+ "brook_av": [
+  "618"
+ ],
+ "brooklyn_bridge": [
+  "640"
+ ],
+ "buhre": [
+  "602"
+ ],
+ "burke_av": [
+  "209"
+ ],
+ "burnside": [
+  "409"
+ ],
+ "canal_123": [
+  "135"
+ ],
+ "canal_6": [
+  "639"
+ ],
+ "canal_ace": [
+  "A34"
+ ],
+ "canal_jz": [
+  "M20"
+ ],
+ "canal_nqrw": [
+  "R23",
+  "Q01"
+ ],
+ "castle_hill": [
+  "607"
+ ],
+ "chambers_123": [
+  "137",
+  "228"
+ ],
+ "chambers_ac": [
+  "A36"
+ ],
+ "christopher": [
+  "133"
+ ],
+ "church_ave_25": [
+  "244"
+ ],
+ "church_ave_fg": [
+  "F26"
+ ],
+ "city_hall": [
+  "R24"
+ ],
+ "classon_av": [
+  "G34"
+ ],
+ "clinton_wash": [
+  "G35"
+ ],
+ "coney_island": [
+  "D43"
+ ],
+ "court_sq_7": [
+  "719"
+ ],
+ "court_sq_em": [
+  "F09"
+ ],
+ "court_sq_g": [
+  "G22"
+ ],
+ "court_st": [
+  "R28"
+ ],
+ "crown_heights": [
+  "250"
+ ],
+ "cypress_av": [
+  "617"
+ ],
+ "dekalb_av": [
+  "R30"
+ ],
+ "dyckman_1": [
+  "109"
+ ],
+ "dyckman_a": [
+  "A03"
+ ],
+ "e_143rd": [
+  "616"
+ ],
+ "e_149th": [
+  "615"
+ ],
+ "eastchester_dyre": [
+  "501"
+ ],
+ "eastern_pkwy": [
+  "238"
+ ],
+ "elder_av": [
+  "611"
+ ],
+ "elmhurst_av": [
+  "G13"
+ ],
+ "flatbush_av": [
+  "247"
+ ],
+ "flushing_jm": [
+  "M12"
+ ],
+ "flushing_main": [
+  "701"
+ ],
+ "fordham_4": [
+  "407"
+ ],
+ "fordham_bd": [
+  "D05"
+ ],
+ "forest_hills": [
+  "G08"
+ ],
+ "franklin_av": [
+  "239"
+ ],
+ "fulton": [
+  "A38",
+  "229",
+  "418",
+  "M22"
+ ],
+ "fulton_g": [
+  "G36"
+ ],
+ "graham_l": [
+  "L11"
+ ],
+ "grand_army": [
+  "237"
+ ],
+ "grand_central": [
+  "631",
+  "723",
+  "901"
+ ],
+ "grand_l": [
+  "L12"
+ ],
+ "greenpoint_av": [
+  "G26"
+ ],
+ "gun_hill": [
+  "208"
+ ],
+ "gun_hill_5": [
+  "503"
+ ],
+ "hewes": [
+  "M14"
+ ],
+ "houston": [
+  "134"
+ ],
+ "hoyt_schermerhorn": [
+  "A42"
+ ],
+ "hoyt_st": [
+  "233"
+ ],
+ "hunters_point": [
+  "720"
+ ],
+ "hunts_point": [
+  "613"
+ ],
+ "inwood_207": [
+  "A02"
+ ],
+ "jackson_hts": [
+  "G14",
+  "710"
+ ],
+ "jamaica_179": [
+  "F01"
+ ],
+ "jamaica_center": [
+  "G05"
+ ],
+ "jay_st": [
+  "A41",
+  "R29"
+ ],
+ "jefferson_l": [
+  "L15"
+ ],
+ "junction_blvd": [
+  "707"
+ ],
+ "junius_3": [
+  "254"
+ ],
+ "kew_gardens": [
+  "F06"
+ ],
+ "kings_hwy_bq": [
+  "D35"
+ ],
+ "kingsbridge": [
+  "406"
+ ],
+ "kingsbridge_bd": [
+  "D04"
+ ],
+ "kingston_av": [
+  "249"
+ ],
+ "longwood": [
+  "614"
+ ],
+ "lorimer_g": [
+  "G29"
+ ],
+ "lorimer_jm": [
+  "M13"
+ ],
+ "lorimer_l": [
+  "L10"
+ ],
+ "marcy_av": [
+  "M16"
+ ],
+ "metropolitan_g": [
+  "G29"
+ ],
+ "mets_willets": [
+  "702"
+ ],
+ "middletown": [
+  "603"
+ ],
+ "montrose_l": [
+  "L13"
+ ],
+ "morris_park": [
+  "505"
+ ],
+ "morrison_soundview": [
+  "610"
+ ],
+ "mosholu": [
+  "402"
+ ],
+ "myrtle_wyckoff": [
+  "M08",
+  "L17"
+ ],
+ "nassau_g": [
+  "G28"
+ ],
+ "nereid": [
+  "204"
+ ],
+ "nevins": [
+  "234"
+ ],
+ "new_lots_3": [
+  "257"
+ ],
+ "newkirk_av_25": [
+  "246"
+ ],
+ "northern_blvd": [
+  "G16"
+ ],
+ "norwood_205": [
+  "D01"
+ ],
+ "nostrand": [
+  "248"
+ ],
+ "park_place": [
+  "228"
+ ],
+ "parkchester": [
+  "608"
+ ],
+ "parsons_blvd": [
+  "F03"
+ ],
+ "pelham_bay": [
+  "601"
+ ],
+ "pelham_pkwy": [
+  "211"
+ ],
+ "pennsylvania_3": [
+  "255"
+ ],
+ "prince": [
+  "R22"
+ ],
+ "queens_plaza": [
+  "G21"
+ ],
+ "queensboro_plaza": [
+  "R09",
+  "718"
+ ],
+ "rockaway_3": [
+  "253"
+ ],
+ "saratoga_3": [
+  "252"
+ ],
+ "south_ferry": [
+  "142"
+ ],
+ "spring_6": [
+  "638"
+ ],
+ "spring_ce": [
+  "A33"
+ ],
+ "st_lawrence": [
+  "609"
+ ],
+ "steinway": [
+  "G19"
+ ],
+ "sutphin_archer": [
+  "G06"
+ ],
+ "sutphin_blvd": [
+  "F04"
+ ],
+ "sutter_4": [
+  "251"
+ ],
+ "tremont_bd": [
+  "D07"
+ ],
+ "union_sq": [
+  "R20",
+  "635",
+  "L03"
+ ],
+ "van_siclen_3": [
+  "256"
+ ],
+ "vernon_jackson": [
+  "721"
+ ],
+ "wakefield_241": [
+  "201"
+ ],
+ "wall_st_23": [
+  "230"
+ ],
+ "wall_st_45": [
+  "419"
+ ],
+ "west_4th": [
+  "D20",
+  "A32"
+ ],
+ "westchester_sq": [
+  "604"
+ ],
+ "whitehall": [
+  "R27"
+ ],
+ "whitlock": [
+  "612"
+ ],
+ "williamsburg": [
+  "M16"
+ ],
+ "woodhaven_blvd": [
+  "G11"
+ ],
+ "woodlawn": [
+  "401"
+ ],
+ "yankee_stadium": [
+  "D11",
+  "414"
+ ],
+ "zerega": [
+  "606"
+ ]
+}
