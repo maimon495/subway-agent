@@ -48,10 +48,41 @@ def parse_time_of_day(text: str, now: Optional[datetime] = None) -> Optional[int
     return hour * 60 + minute
 
 
+def _clock(hhmm: str) -> str:
+    """"18:19" -> "6:19 PM". The model was re-deriving times from the rider's
+    own words and getting the meridiem wrong, so hand it no arithmetic."""
+    try:
+        hour, minute = int(hhmm[:2]), int(hhmm[3:5])
+    except (ValueError, IndexError):
+        return hhmm
+    suffix = "AM" if hour % 24 < 12 else "PM"
+    display = hour % 12 or 12
+    return f"{display}:{minute:02d} {suffix}"
+
+
+def _track_at(train_number: str, stop_id: str, day: date_cls, event_type: str) -> str:
+    """Posted track if the MTA has set one, else the historical guess."""
+    try:
+        live = get_live_stop(train_number, stop_id)
+    except Exception:
+        live = None
+    if live and live.track:
+        return f"Track {live.track} (posted)"
+    try:
+        prediction = predict_track(train_number, stop_id, day, event_type=event_type)
+    except Exception:
+        return "not posted yet"
+    if prediction:
+        return f"{prediction.describe()} (predicted, not posted)"
+    return "not posted yet, and not enough history to predict"
+
+
 def _describe(stop: ScheduledStop, day: date_cls, want_track: bool) -> str:
-    depart = stop.departure_time[:5]
-    dest = stop.headsign or station_name(stop.destination_stop_id)
-    lines = [f"Train {stop.train_number}, {depart} to {dest}."]
+    depart = _clock(stop.departure_time)
+    dest_id = stop.destination_stop_id
+    dest = stop.headsign or station_name(dest_id)
+    origin = station_name(stop.stop_id)
+    lines = [f"Train {stop.train_number} departs {origin} at {depart} for {dest}."]
 
     live = None
     try:
@@ -62,9 +93,12 @@ def _describe(stop: ScheduledStop, day: date_cls, want_track: bool) -> str:
     if live:
         lines.append(f"Status: {live.status}.")
         if live.track:
-            lines.append(f"Track {live.track} — posted now, this is the real one.")
-            return " ".join(lines)
-        lines.append("No track posted yet.")
+            # Name the station. "Track A" alone reads as the arrival track to
+            # someone waiting at Penn, when it is the platform they are
+            # leaving from.
+            lines.append(f"Departure track at {origin}: Track {live.track} (posted).")
+        else:
+            lines.append(f"No departure track posted at {origin} yet.")
     else:
         lines.append(
             "Not in the real-time feed yet — it only looks about 4 hours ahead, "
@@ -74,21 +108,17 @@ def _describe(stop: ScheduledStop, day: date_cls, want_track: bool) -> str:
     if not want_track:
         return " ".join(lines)
 
-    try:
-        prediction = predict_track(stop.train_number, stop.stop_id, day)
-    except Exception:
-        # Never surface a stack trace or a credentials URL to someone asking
-        # about a train.
-        lines.append("(track history unavailable just now.)")
-        return " ".join(lines)
+    # "What track will it arrive on" is asked by someone meeting the train, so
+    # the track that matters is at the far end — Penn or Grand Central — not
+    # the one it is leaving from.
+    if dest_id and dest_id != stop.stop_id:
+        arrival = _track_at(stop.train_number, dest_id, day, "arrival")
+        lines.append(f"Arrival track at {station_name(dest_id)}: {arrival}.")
 
-    if prediction:
-        lines.append(f"Expected: {prediction.describe()}.")
-    else:
-        lines.append(
-            "No track prediction yet — not enough history for this train. "
-            "Track history collection is still building up."
-        )
+    if not (live and live.track):
+        departure = _track_at(stop.train_number, stop.stop_id, day, "departure")
+        if "not posted" not in departure or "history" in departure:
+            lines.append(f"Departure track at {origin}: {departure}.")
     return " ".join(lines)
 
 
