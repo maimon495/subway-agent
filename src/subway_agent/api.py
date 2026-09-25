@@ -1,6 +1,7 @@
 """FastAPI web interface for the subway agent."""
 
 import os
+import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query
@@ -16,7 +17,15 @@ from .routing import find_route
 from .database import db
 
 STATIC_DIR = Path(__file__).parent / "static"
-SUBWAY_API_KEY = os.getenv("SUBWAY_API_KEY")
+
+# Comma-separated, so several keys can be valid at once. The iOS app compiles
+# its key into the binary, so a single accepted key makes rotation a hard
+# cutover: change it and every already-installed build starts getting 401s.
+# Accepting a list allows add-new -> ship the app -> drop-old, with no moment
+# where a shipped build is broken.
+SUBWAY_API_KEYS = [
+    k.strip() for k in (os.getenv("SUBWAY_API_KEY") or "").split(",") if k.strip()
+]
 
 
 async def verify_api_key(
@@ -25,7 +34,11 @@ async def verify_api_key(
 ):
     """Verify API key from query param or header."""
     provided_key = key or x_api_key
-    if not SUBWAY_API_KEY or provided_key != SUBWAY_API_KEY:
+    # compare_digest keeps the check constant-time, so responses do not leak
+    # how much of a guessed key was right.
+    if not provided_key or not any(
+        secrets.compare_digest(provided_key, valid) for valid in SUBWAY_API_KEYS
+    ):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return provided_key
 
