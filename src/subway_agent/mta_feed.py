@@ -76,7 +76,7 @@ class MTAFeedParser:
     def _find_station_by_gtfs_id(self, gtfs_id: str) -> Optional[Station]:
         """Find station by GTFS stop ID."""
         for station in STATIONS.values():
-            if station.gtfs_stop_id == gtfs_id:
+            if gtfs_id in (station.gtfs_stop_ids or [station.gtfs_stop_id]):
                 return station
         return None
 
@@ -127,8 +127,9 @@ class MTAFeedParser:
                 for stop_time_update in trip_update.stop_time_update:
                     gtfs_stop_id, direction = self._parse_stop_id(stop_time_update.stop_id)
 
-                    # Check if this is the station we're looking for
-                    if gtfs_stop_id != station.gtfs_stop_id:
+                    # Check if this is the station we're looking for. A complex
+                    # spans several GTFS stops, so match against all of them.
+                    if gtfs_stop_id not in (station.gtfs_stop_ids or [station.gtfs_stop_id]):
                         continue
 
                     # Get arrival time
