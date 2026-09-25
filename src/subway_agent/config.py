@@ -14,7 +14,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)  # Ensure data directory exists
 
 # Groq API
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Groq retires models without warning — llama-3.3-70b-versatile was hardcoded
+# here and silently 404'd once it was withdrawn, taking the whole agent down.
+# Keep this overridable so the next retirement is an env var change, not a
+# redeploy. Check availability with GET https://api.groq.com/openai/v1/models.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # MTA real-time API (optional; MTA says keys no longer required for subway feeds)
 MTA_API_KEY = os.getenv("MTA_API_KEY")
