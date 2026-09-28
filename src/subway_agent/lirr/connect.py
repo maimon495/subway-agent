@@ -18,8 +18,8 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from ..mta_feed import get_arrivals
-from ..routing import find_route
-from ..stations import find_station
+from ..routing import subway_graph
+from ..stations import STATIONS, find_station
 from .schedule import ScheduledStop
 from .feed import (
     ATLANTIC_TERMINAL_STOP_ID,
@@ -41,12 +41,17 @@ TERMINAL_WALK_MINUTES = {
     JAMAICA_STOP_ID: 4,
 }
 
-# The subway station a rider actually arrives into for each LIRR terminal.
-TERMINAL_SUBWAY_STATION = {
-    PENN_STATION_STOP_ID: "34th St-Penn Station",
-    GRAND_CENTRAL_STOP_ID: "Grand Central-42nd St",
-    ATLANTIC_TERMINAL_STOP_ID: "Atlantic Av-Barclays Ctr",
-    JAMAICA_STOP_ID: "Jamaica",
+# Subway stations that put a rider inside each LIRR terminal, by station id
+# rather than name: display names are not unique, and "34th St-Penn Station"
+# resolves to the A/C/E station or the 1/2/3 one depending on the spelling,
+# which silently produced routes to the wrong platform. Several ids per
+# terminal because Penn is reachable from either line group and the shorter
+# ride depends on where the rider starts.
+TERMINAL_SUBWAY_STATION_IDS = {
+    PENN_STATION_STOP_ID: ["34th_penn_123", "34th_penn_ace"],
+    GRAND_CENTRAL_STOP_ID: ["grand_central"],
+    ATLANTIC_TERMINAL_STOP_ID: ["atlantic_barclays"],
+    JAMAICA_STOP_ID: ["jamaica_179"],
 }
 
 # Below this, treat it as "running for it" rather than a comfortable catch.
@@ -132,11 +137,30 @@ def assess(
         blank.note = f"I don't recognise the subway station '{from_station_name}'"
         return blank
 
-    target_name = TERMINAL_SUBWAY_STATION.get(terminal_id)
-    destination = find_station(target_name) if target_name else None
-    if not destination:
+    candidates = [
+        STATIONS[sid]
+        for sid in TERMINAL_SUBWAY_STATION_IDS.get(terminal_id, [])
+        if sid in STATIONS
+    ]
+    if not candidates:
         blank.note = "no subway station mapped for that terminal"
         return blank
+
+    # Pick whichever entrance actually gives the shorter ride from here.
+    best = None
+    for candidate in candidates:
+        if origin.id == candidate.id:
+            best = (0, candidate, None)
+            break
+        # By id, not name: find_route(name) re-resolves and collapses the
+        # five stations called "23rd St" onto whichever one matches first.
+        option = subway_graph.find_route(origin.id, candidate.id)
+        if option and (best is None or option.total_time_minutes < best[0]):
+            best = (option.total_time_minutes, candidate, option)
+    if best is None:
+        blank.note = "no subway route found"
+        return blank
+    _, destination, route = best
 
     if origin.id == destination.id:
         # Already there; only the walk upstairs is left.
@@ -148,7 +172,6 @@ def assess(
             train_departs=departs, margin_minutes=margin,
         )
 
-    route = find_route(origin.name, destination.name)
     if not route or not route.segments:
         blank.note = "no subway route found"
         return blank
