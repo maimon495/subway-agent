@@ -3,6 +3,9 @@ langgraph>=0.2.0
 langchain>=0.3.0
 langchain-groq>=0.2.0
 
+# Tracing — inert unless LANGSMITH_TRACING=true and a key are set
+langsmith>=0.1.0
+
 # MTA GTFS-realtime
 gtfs-realtime-bindings>=1.0.0
 protobuf>=4.25.0

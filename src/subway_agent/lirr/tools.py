@@ -9,9 +9,15 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
+from .connect import assess, terminal_for
 from .live import get_live_stop
 from .predict import predict_track
 from .schedule import ScheduledStop, find_departures
+from .feed import (
+    ATLANTIC_TERMINAL_STOP_ID,
+    GRAND_CENTRAL_STOP_ID,
+    PENN_STATION_STOP_ID,
+)
 from .stations import find_stop_id, station_name
 
 EASTERN = ZoneInfo("America/New_York")
@@ -203,4 +209,65 @@ def lirr_next_departures(origin: str, destination: str = "") -> str:
     return f"Next from {station_name(origin_id)}:\n" + "\n".join(lines)
 
 
-LIRR_TOOLS = [lirr_train_status, lirr_next_departures]
+@tool
+def can_i_make_lirr_train(
+    from_station: str,
+    lirr_destination: str,
+    time_of_day: str = "",
+    train_number: str = "",
+) -> str:
+    """Whether you can reach an LIRR train in time, starting from a subway station.
+
+    Answers "I'm at 23rd St, can I make the 6:19 to Huntington?" — combines the
+    live subway wait, the ride to the terminal, the walk up to the LIRR
+    concourse, and the train's departure, and reports the margin plus the track.
+
+    Args:
+        from_station: The SUBWAY station you are at now, e.g. "23rd St", "Union Square"
+        lirr_destination: Where the LIRR train goes, e.g. "Huntington", "Ronkonkoma"
+        time_of_day: The LIRR departure time as spoken, e.g. "6:19", "5pm" (optional)
+        train_number: Exact LIRR train number if known (optional)
+
+    Returns:
+        Whether it is makeable, with the margin in minutes and the track.
+    """
+    dest_id = find_stop_id(lirr_destination)
+    if not dest_id:
+        return f"I don't recognise the LIRR station '{lirr_destination}'."
+
+    now = _now_eastern()
+    day = now.date()
+    near = parse_time_of_day(time_of_day, now) if time_of_day else (now.hour * 60 + now.minute)
+
+    # Consider every terminal the rider could plausibly leave from, not just
+    # Penn — the same destination is often reachable from Grand Central too,
+    # and which one is right depends on where they are standing.
+    candidates: list = []
+    for terminal in (PENN_STATION_STOP_ID, GRAND_CENTRAL_STOP_ID, ATLANTIC_TERMINAL_STOP_ID):
+        for stop in find_departures(terminal, dest_id, day, near_minutes=near, limit=3):
+            if train_number and stop.train_number != str(train_number):
+                continue
+            if stop.minutes_after_midnight < now.hour * 60 + now.minute:
+                continue          # already gone
+            candidates.append(stop)
+    if not candidates:
+        return (
+            f"No upcoming LIRR departures to {station_name(dest_id)}"
+            f"{' near ' + time_of_day if time_of_day else ''} today."
+        )
+
+    candidates.sort(key=lambda s: s.minutes_after_midnight)
+    lines_out = []
+    for stop in candidates[:3]:
+        connection = assess(from_station, stop, now=now)
+        headline = connection.describe()
+        track = _track_at(stop.train_number, stop.stop_id, day, "departure")
+        lines_out.append(
+            f"Train {stop.train_number}, {_clock(stop.departure_time)} from "
+            f"{station_name(stop.stop_id)} to {stop.headsign or station_name(dest_id)}. "
+            f"{headline} Departure track: {track}."
+        )
+    return f"From {from_station}:\n" + "\n".join(lines_out)
+
+
+LIRR_TOOLS = [lirr_train_status, lirr_next_departures, can_i_make_lirr_train]
