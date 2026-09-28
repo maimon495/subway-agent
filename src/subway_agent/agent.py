@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import re
 from typing import Annotated, TypedDict, Optional
 
@@ -15,6 +16,7 @@ from langgraph.prebuilt import ToolNode
 from .config import GROQ_API_KEY, GROQ_MODEL
 from .tools import ALL_TOOLS, get_route, get_route_with_arrivals, get_train_arrivals, get_station_info, find_stations_on_line, save_preference, get_preference, get_common_trips, compare_local_vs_express, plan_trip_with_transfers, get_transfer_timing
 from .lirr.tools import LIRR_TOOLS, lirr_train_status, lirr_next_departures
+from .telemetry import record_turn
 from .database import db
 
 
@@ -296,6 +298,7 @@ def chat(message: str, user_id: str = "default") -> str:
 
     # Run agent
     agent = get_agent()
+    started = time.monotonic()
     try:
         result = agent.invoke(
             {"messages": messages, "user_id": user_id},
@@ -303,11 +306,17 @@ def chat(message: str, user_id: str = "default") -> str:
         )
     except Exception as e:
         error_str = str(e)
+        elapsed = int((time.monotonic() - started) * 1000)
         if "recursion_limit" in error_str or "GRAPH_RECURSION_LIMIT" in error_str:
-            return (
+            fallback = (
                 "I hit a limit while thinking. Please try a shorter question, e.g. "
                 "'Fastest way South Ferry to Penn now?' or 'When is the next 1 train at South Ferry?'"
             )
+            record_turn(message, fallback, user_id=user_id, latency_ms=elapsed,
+                        model=GROQ_MODEL, error="recursion_limit")
+            return fallback
+        record_turn(message, "", user_id=user_id, latency_ms=elapsed,
+                    model=GROQ_MODEL, error=error_str[:500])
         raise
 
     # Extract response
@@ -323,6 +332,17 @@ def chat(message: str, user_id: str = "default") -> str:
 
     # Save assistant response to history
     db.add_message("assistant", response, user_id)
+
+    # Record the whole turn — question, tool calls, answer. A wrong answer is
+    # still a 200, so without this the failures that matter leave no trace.
+    record_turn(
+        message,
+        response,
+        messages=result.get("messages"),
+        user_id=user_id,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        model=GROQ_MODEL,
+    )
 
     return response
 
