@@ -130,32 +130,35 @@ def _describe(stop: ScheduledStop, day: date_cls, want_track: bool) -> str:
 
 @tool
 def lirr_train_status(
-    origin: str,
-    destination: str = "",
+    departs_from: str,
+    heading_to: str = "",
     time_of_day: str = "",
     train_number: str = "",
 ) -> str:
     """Check an LIRR train: whether it is on time and what track to expect.
 
-    Use for any Long Island Rail Road question — Penn Station, Grand Central,
-    Jamaica, Atlantic Terminal, or any branch station. Answers "is the 5:00 to
-    Ronkonkoma on time and what track will it be on".
+    Both stations describe the TRAIN, not where the rider is standing. Read
+    them straight off the sentence:
+      "the 5:00 to Ronkonkoma"        -> departs_from="Penn Station", heading_to="Ronkonkoma"
+      "the 6:19 from Huntington"      -> departs_from="Huntington"
+      "the 6:19 from Huntington into Penn" -> departs_from="Huntington", heading_to="Penn Station"
+    Do not assume the rider is at Penn. "from X" always means departs_from=X.
 
     Args:
-        origin: Station you are leaving from, e.g. "Penn Station", "Grand Central"
-        destination: Where the train is going, e.g. "Ronkonkoma" (optional)
+        departs_from: Station the TRAIN leaves from — the station after "from"
+        heading_to: Where the TRAIN is going — the station after "to" (optional)
         time_of_day: Departure time as spoken, e.g. "5:00", "5pm", "17:02" (optional)
         train_number: Exact LIRR train number if the rider knows it (optional)
 
     Returns:
         Scheduled time, on-time status, and the posted or expected track.
     """
-    origin_id = find_stop_id(origin)
+    origin_id = find_stop_id(departs_from)
     if not origin_id:
-        return f"I don't recognise the LIRR station '{origin}'."
-    dest_id = find_stop_id(destination) if destination else None
-    if destination and not dest_id:
-        return f"I don't recognise the LIRR station '{destination}'."
+        return f"I don't recognise the LIRR station '{departs_from}'."
+    dest_id = find_stop_id(heading_to) if heading_to else None
+    if heading_to and not dest_id:
+        return f"I don't recognise the LIRR station '{heading_to}'."
 
     now = _now_eastern()
     day = now.date()
@@ -179,20 +182,20 @@ def lirr_train_status(
 
 
 @tool
-def lirr_next_departures(origin: str, destination: str = "") -> str:
+def lirr_next_departures(departs_from: str, heading_to: str = "") -> str:
     """List the next few LIRR departures from a station.
 
     Args:
-        origin: Station to depart from, e.g. "Penn Station"
-        destination: Optional destination to filter by, e.g. "Babylon"
+        departs_from: Station the trains leave from, e.g. "Penn Station"
+        heading_to: Optional destination to filter by, e.g. "Babylon"
 
     Returns:
         The next departures with scheduled times and destinations.
     """
-    origin_id = find_stop_id(origin)
+    origin_id = find_stop_id(departs_from)
     if not origin_id:
-        return f"I don't recognise the LIRR station '{origin}'."
-    dest_id = find_stop_id(destination) if destination else None
+        return f"I don't recognise the LIRR station '{departs_from}'."
+    dest_id = find_stop_id(heading_to) if heading_to else None
 
     now = _now_eastern()
     near = now.hour * 60 + now.minute
@@ -211,7 +214,7 @@ def lirr_next_departures(origin: str, destination: str = "") -> str:
 
 @tool
 def can_i_make_lirr_train(
-    from_station: str,
+    rider_subway_station: str,
     lirr_destination: str,
     time_of_day: str = "",
     train_number: str = "",
@@ -223,7 +226,8 @@ def can_i_make_lirr_train(
     concourse, and the train's departure, and reports the margin plus the track.
 
     Args:
-        from_station: The SUBWAY station you are at now, e.g. "23rd St", "Union Square"
+        rider_subway_station: The SUBWAY station the RIDER is standing at now,
+            e.g. "23rd St", "Union Square". This one is about the person, not the train.
         lirr_destination: Where the LIRR train goes, e.g. "Huntington", "Ronkonkoma"
         time_of_day: The LIRR departure time as spoken, e.g. "6:19", "5pm" (optional)
         train_number: Exact LIRR train number if known (optional)
@@ -259,7 +263,7 @@ def can_i_make_lirr_train(
     candidates.sort(key=lambda s: s.minutes_after_midnight)
     lines_out = []
     for stop in candidates[:3]:
-        connection = assess(from_station, stop, now=now)
+        connection = assess(rider_subway_station, stop, now=now)
         headline = connection.describe()
         track = _track_at(stop.train_number, stop.stop_id, day, "departure")
         lines_out.append(
@@ -267,7 +271,7 @@ def can_i_make_lirr_train(
             f"{station_name(stop.stop_id)} to {stop.headsign or station_name(dest_id)}. "
             f"{headline} Departure track: {track}."
         )
-    return f"From {from_station}:\n" + "\n".join(lines_out)
+    return f"From {rider_subway_station}:\n" + "\n".join(lines_out)
 
 
 LIRR_TOOLS = [lirr_train_status, lirr_next_departures, can_i_make_lirr_train]

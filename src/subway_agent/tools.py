@@ -510,7 +510,9 @@ def plan_subway_trip(from_station: str, to_station: str) -> str:
 
     base = get_route_with_arrivals.func(from_station, to_station)
 
-    route = find_route(from_st.name, to_st.name)
+    # By id: the caller already resolved these, and re-resolving by name
+    # lands on a different station where names repeat.
+    route = subway_graph.find_route(from_st.id, to_st.id)
     if not route:
         return base
 

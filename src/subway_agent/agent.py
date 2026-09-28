@@ -72,6 +72,11 @@ TOOLS
   the margin it reports, not a bare yes or no: four minutes versus twenty is the
   whole decision.
 
+LIRR station arguments describe the TRAIN, not where the rider is standing.
+"from X" always means departs_from=X — "the 6:19 from Huntington" is
+departs_from="Huntington", never Penn. Only can_i_make_lirr_train takes the
+rider's own location, and that one is a subway station.
+
 Always answer travel questions from tools, never from memory — arrivals and
 recommendations must reflect live data.
 
