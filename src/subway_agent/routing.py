@@ -5,6 +5,9 @@ from __future__ import annotations
 import heapq
 from collections import deque
 from dataclasses import dataclass
+import functools
+import json
+import pathlib
 from typing import Optional
 
 from .stations import STATIONS, Station, find_station
@@ -220,6 +223,32 @@ LINE_SEQUENCES = {
 }
 
 
+
+_GTFS_SEQUENCES_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "line_sequences.json"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _line_sequences() -> dict[str, list[str]]:
+    """Stop order per line, derived from GTFS, falling back to the literal.
+
+    Regenerate with: python scripts/build_line_sequences.py
+    """
+    try:
+        loaded = json.loads(_GTFS_SEQUENCES_PATH.read_text())
+    except (OSError, ValueError):
+        return LINE_SEQUENCES
+    # Keep only stations the table actually models, so a stale data file can
+    # never introduce edges to stations that do not exist.
+    cleaned = {
+        line: [s for s in stops if s in STATIONS]
+        for line, stops in loaded.items()
+    }
+    cleaned = {line: stops for line, stops in cleaned.items() if len(stops) >= 2}
+    return cleaned or LINE_SEQUENCES
+
+
 class SubwayGraph:
     """Graph representation of the NYC subway system."""
 
@@ -237,8 +266,14 @@ class SubwayGraph:
         self._build_graph()
 
     def _build_graph(self):
-        """Build adjacency list from line sequences."""
-        for line, stations in LINE_SEQUENCES.items():
+        """Build adjacency list from line sequences.
+
+        Sequences come from GTFS where available. The hand-maintained
+        LINE_SEQUENCES had drifted — the 1 was recorded through Wall St and
+        Fulton St, which it does not serve — so routing proposed transfers
+        that cannot be made. It remains as a fallback only.
+        """
+        for line, stations in _line_sequences().items():
             for i in range(len(stations) - 1):
                 from_id = stations[i]
                 to_id = stations[i + 1]
