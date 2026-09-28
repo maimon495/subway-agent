@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTAGPT — Turn Viewer</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --ink:#12161c; --muted:#5b6673;
+    --mta:#0039a6; --bad:#c0392b; --warn:#b26a00; --ok:#1c7c4c; --code:#f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1319; --panel:#161b23; --line:#262d38; --ink:#e7ecf3;
+            --muted:#93a0b0; --mta:#5b8def; --code:#0c1016; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { background:var(--mta); color:#fff; padding:14px 20px; }
+  header h1 { margin:0; font-size:16px; font-weight:600; letter-spacing:.2px; }
+  header p { margin:3px 0 0; font-size:12px; opacity:.85; }
+  .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+         padding:12px 20px; border-bottom:1px solid var(--line); background:var(--panel); }
+  input[type=search], select { padding:7px 10px; border:1px solid var(--line);
+         border-radius:7px; background:var(--panel); color:var(--ink); font-size:13px; }
+  input[type=search] { min-width:230px; }
+  button { padding:7px 13px; border:0; border-radius:7px; background:var(--mta);
+           color:#fff; font-size:13px; cursor:pointer; }
+  label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .wrap { padding:16px 20px 40px; max-width:1100px; margin:0 auto; }
+  .stats { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .turn { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          margin-bottom:10px; overflow:hidden; }
+  .turn > summary { padding:11px 14px; cursor:pointer; display:flex; gap:10px;
+                    align-items:baseline; list-style:none; }
+  .turn > summary::-webkit-details-marker { display:none; }
+  .q { flex:1; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta { color:var(--muted); font-size:12px; white-space:nowrap; }
+  .tag { font-size:11px; padding:2px 7px; border-radius:20px; white-space:nowrap; }
+  .tag.tool { background:rgba(28,124,76,.14); color:var(--ok); }
+  .tag.none { background:rgba(178,106,0,.16); color:var(--warn); }
+  .tag.err  { background:rgba(192,57,43,.14); color:var(--bad); }
+  .body { padding:0 14px 14px; border-top:1px solid var(--line); }
+  .body h3 { font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+             color:var(--muted); margin:14px 0 5px; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:7px;
+        padding:9px 11px; overflow-x:auto; font-size:12px; margin:0;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .answer { white-space:pre-wrap; }
+  .call { border-left:3px solid var(--mta); padding-left:10px; margin-bottom:10px; }
+  .call .name { font-weight:600; font-size:13px; }
+  .empty { text-align:center; color:var(--muted); padding:50px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MTAGPT — Turn Viewer</h1>
+  <p>What was asked, which tools ran, and what came back. A wrong answer is still a 200, so this is the only place failures are visible.</p>
+</header>
+
+<div class="bar">
+  <input type="search" id="q" placeholder="Search questions and answers…">
+  <label><input type="checkbox" id="fail"> Problems only</label>
+  <select id="limit">
+    <option value="50">50 turns</option>
+    <option value="100">100</option>
+    <option value="250">250</option>
+  </select>
+  <button id="go">Refresh</button>
+</div>
+
+<div class="wrap">
+  <div class="stats" id="stats">Loading…</div>
+  <div id="list"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const KEY = params.get('key') || '';
+const el = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function when(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString([], {month:'short', day:'numeric',
+    hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+async function load() {
+  const u = new URL('/turns', location.origin);
+  u.searchParams.set('key', KEY);
+  u.searchParams.set('limit', el('limit').value);
+  if (el('fail').checked) u.searchParams.set('only_failures', 'true');
+  if (el('q').value.trim()) u.searchParams.set('search', el('q').value.trim());
+
+  el('stats').textContent = 'Loading…';
+  let data;
+  try {
+    const r = await fetch(u);
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + (await r.text()).slice(0, 160));
+    data = await r.json();
+  } catch (e) {
+    el('stats').textContent = '';
+    el('list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+    return;
+  }
+
+  const turns = data.turns || [];
+  const noTool = turns.filter(t => !t.used_any_tool).length;
+  const errs = turns.filter(t => t.error).length;
+  const lat = turns.filter(t => t.latency_ms).map(t => t.latency_ms).sort((a,b) => a-b);
+  const median = lat.length ? lat[Math.floor(lat.length/2)] : null;
+  el('stats').textContent =
+    `${turns.length} turns · ${noTool} used no tool · ${errs} errored` +
+    (median ? ` · median ${median} ms` : '');
+
+  if (!turns.length) {
+    el('list').innerHTML = '<div class="empty">No turns match.</div>';
+    return;
+  }
+
+  el('list').innerHTML = turns.map(t => {
+    const tag = t.error ? '<span class="tag err">error</span>'
+              : t.used_any_tool ? `<span class="tag tool">${esc(t.tool_names || 'tool')}</span>`
+              : '<span class="tag none">no tool</span>';
+    const calls = (t.tool_calls || []).map(c => `
+      <div class="call">
+        <div class="name">${esc(c.name)}</div>
+        <h3>Arguments</h3><pre>${esc(JSON.stringify(c.args, null, 1))}</pre>
+        <h3>Returned</h3><pre>${esc(c.result_preview || '—')}</pre>
+      </div>`).join('') || '<pre>No tool was called.</pre>';
+    return `
+      <details class="turn">
+        <summary>
+          <span class="q">${esc(t.question)}</span>
+          ${tag}
+          <span class="meta">${esc(when(t.turn_at))}${t.latency_ms ? ' · ' + t.latency_ms + ' ms' : ''}</span>
+        </summary>
+        <div class="body">
+          <h3>Question</h3><pre>${esc(t.question)}</pre>
+          <h3>Tool calls</h3>${calls}
+          <h3>Answer</h3><pre class="answer">${esc(t.answer || '—')}</pre>
+          ${t.error ? '<h3>Error</h3><pre>' + esc(t.error) + '</pre>' : ''}
+          <h3>Context</h3><pre>user ${esc(t.user_id || '—')} · model ${esc(t.model || '—')}</pre>
+        </div>
+      </details>`;
+  }).join('');
+}
+
+el('go').onclick = load;
+el('fail').onchange = load;
+el('limit').onchange = load;
+el('q').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+load();
+</script>
+</body>
+</html>

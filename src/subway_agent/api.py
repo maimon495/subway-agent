@@ -1,5 +1,6 @@
 """FastAPI web interface for the subway agent."""
 
+import json
 import os
 import secrets
 from pathlib import Path
@@ -41,6 +42,78 @@ async def verify_api_key(
     ):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return provided_key
+
+
+@app.get("/turns")
+async def list_turns(
+    limit: int = 50,
+    only_failures: bool = False,
+    search: Optional[str] = None,
+    _: str = Depends(verify_api_key),
+):
+    """Recent agent turns, newest first — the data behind the viewer.
+
+    A wrong answer is a 200, so request logs cannot show which turns went
+    badly. These rows carry the question, the tools chosen with their
+    arguments, what each returned, and the final answer.
+    """
+    from google.cloud import bigquery
+
+    project = os.getenv("GOOGLE_CLOUD_PROJECT", "subway-agent-nyc")
+    dataset = os.getenv("AGENT_BQ_DATASET", "agent")
+    table = os.getenv("AGENT_BQ_TABLE", "turns")
+
+    where = []
+    params = [bigquery.ScalarQueryParameter("lim", "INT64", max(1, min(limit, 500)))]
+    if only_failures:
+        # "Failure" here means the agent reached for nothing, or blew up — the
+        # cases worth reading first. A wrong answer that used a tool still
+        # needs a human eye.
+        where.append("(used_any_tool = FALSE OR error IS NOT NULL)")
+    if search:
+        where.append("(LOWER(question) LIKE @q OR LOWER(answer) LIKE @q)")
+        params.append(bigquery.ScalarQueryParameter("q", "STRING", f"%{search.lower()}%"))
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+    try:
+        client = bigquery.Client(project=project)
+        rows = client.query(
+            f"""SELECT turn_at, user_id, question, answer, tool_calls, tool_names,
+                       used_any_tool, latency_ms, model, error
+                FROM `{project}.{dataset}.{table}`
+                {clause}
+                ORDER BY turn_at DESC
+                LIMIT @lim""",
+            job_config=bigquery.QueryJobConfig(query_parameters=params),
+        ).result()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"turn store unavailable: {exc}")
+
+    out = []
+    for r in rows:
+        try:
+            calls = json.loads(r.tool_calls) if r.tool_calls else []
+        except ValueError:
+            calls = []
+        out.append({
+            "turn_at": r.turn_at.isoformat() if r.turn_at else None,
+            "user_id": r.user_id,
+            "question": r.question,
+            "answer": r.answer,
+            "tool_calls": calls,
+            "tool_names": r.tool_names,
+            "used_any_tool": r.used_any_tool,
+            "latency_ms": r.latency_ms,
+            "model": r.model,
+            "error": r.error,
+        })
+    return {"turns": out, "count": len(out)}
+
+
+@app.get("/logs")
+async def turn_viewer(_: str = Depends(verify_api_key)):
+    """Browser view of recent turns."""
+    return FileResponse(STATIC_DIR / "logs.html")
 
 app = FastAPI(
     title="NYC Subway Agent",
