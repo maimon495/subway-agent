@@ -33,7 +33,7 @@ class Station:
 # Format: id, name, lines, gtfs_stop_id, lat, lon, borough
 STATIONS_DATA = [
     # Manhattan - Lower
-    ("south_ferry", "South Ferry", ["1", "2", "3"], "142", 40.7019, -74.0130, "Manhattan"),
+    ("south_ferry", "South Ferry", ["1"], "142", 40.7019, -74.0130, "Manhattan"),
     ("whitehall", "Whitehall St-South Ferry", ["R", "W"], "R27", 40.7031, -74.0129, "Manhattan"),
     ("bowling_green", "Bowling Green", ["4", "5"], "420", 40.7046, -74.0140, "Manhattan"),
     ("wall_st_23", "Wall St", ["2", "3"], "230", 40.7069, -74.0100, "Manhattan"),
