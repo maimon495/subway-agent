@@ -3,7 +3,7 @@
 from typing import Optional
 from langchain_core.tools import tool
 
-from .stations import find_station, find_stations_by_line, STATIONS
+from .stations import find_station, find_stations_by_line, Station, STATIONS
 from .mta_feed import get_arrivals
 from .routing import find_route, subway_graph, get_travel_time_on_line
 from .database import db
@@ -276,9 +276,13 @@ def compare_local_vs_express(
     Returns:
         Next local departure, Option 1 (stay on local) total min, Option 2 (transfer to express) total min, wait at transfer, recommendation.
     """
-    from_st = find_station(from_station)
-    to_st = find_station(to_station)
-    xfer_st = find_station(transfer_station)
+    # Accept Station objects as well as names. Display names are not unique —
+    # "34th St-Penn Station" is both the 1/2/3 and the A/C/E station — so a
+    # caller that already resolved a station must not have to re-resolve it by
+    # name and land somewhere else.
+    from_st = from_station if isinstance(from_station, Station) else find_station(from_station)
+    to_st = to_station if isinstance(to_station, Station) else find_station(to_station)
+    xfer_st = transfer_station if isinstance(transfer_station, Station) else find_station(transfer_station)
     if not from_st or not to_st or not xfer_st:
         return f"Could not find station(s). Check: from={from_station}, to={to_station}, transfer={transfer_station}."
 
@@ -291,7 +295,7 @@ def compare_local_vs_express(
     if time_origin_to_dest_local is None:
         return f"No path on {local_line} from {from_st.name} to {to_st.name}. Check station names and line."
     if from_st.id != xfer_st.id and (time_origin_to_xfer_local is None or time_origin_to_xfer_local <= 0):
-        return f"No path on {local_line} from {from_st.name} to {transfer_station}. Check station names."
+        return f"No path on {local_line} from {from_st.name} to {xfer_st.name}. Check station names."
 
     time_xfer_to_dest_express = None
     for ex in express_list:
@@ -300,7 +304,7 @@ def compare_local_vs_express(
             time_xfer_to_dest_express = t
             break
     if time_xfer_to_dest_express is None:
-        return f"No path on express {express_lines} from {transfer_station} to {to_st.name}. Check station names."
+        return f"No path on express {express_lines} from {xfer_st.name} to {to_st.name}. Check station names."
 
     local_arrivals = get_arrivals(from_st.id, [local_line])
     local_same_dir = [a for a in local_arrivals if a.direction == want_direction]
@@ -330,7 +334,7 @@ def compare_local_vs_express(
             f"Next {local_line} train at {from_st.name}: {depart_wait} min",
             "",
             f"Option 1 (Stay on {local_line}): arrive at {to_st.name} in {direct_total} min",
-            f"Option 2 (Transfer to {express_lines} at {transfer_station}): no {express_lines} train you can catch in time.",
+            f"Option 2 (Transfer to {express_lines} at {xfer_st.name}): no {express_lines} train you can catch in time.",
             "",
             f"Recommendation: Stay on the {local_line}.",
         ]
@@ -345,14 +349,14 @@ def compare_local_vs_express(
         f"Next {local_line} train at {from_st.name}: {depart_wait} min",
         "",
         f"Option 1 (Stay on {local_line}): arrive at {to_st.name} in {direct_total} min",
-        f"Option 2 (Transfer to {next_express.line} at {transfer_station}): arrive at {to_st.name} in {transfer_total} min",
-        f"  If you transfer: next {express_lines} you can catch in {express_depart_min} min; wait at {transfer_station}: {wait_at_xfer} min.",
+        f"Option 2 (Transfer to {next_express.line} at {xfer_st.name}): arrive at {to_st.name} in {transfer_total} min",
+        f"  If you transfer: next {express_lines} you can catch in {express_depart_min} min; wait at {xfer_st.name}: {wait_at_xfer} min.",
         "",
     ]
     if direct_total <= transfer_total:
         result.append(f"Recommendation: Stay on the {local_line} (saves {transfer_total - direct_total} min).")
     else:
-        result.append(f"Recommendation: Transfer to {express_lines} at {transfer_station} (saves {direct_total - transfer_total} min).")
+        result.append(f"Recommendation: Transfer to {express_lines} at {xfer_st.name} (saves {direct_total - transfer_total} min).")
     return "\n".join(result)
 
 
@@ -452,16 +456,88 @@ def get_transfer_timing(from_station: str, to_station: str) -> str:
 
 
 # List of all tools for the agent
+
+def _express_alternative(from_st, to_st, route):
+    """Find a local->express transfer worth comparing, from the route itself.
+
+    Previously the model had to supply the transfer station and say which line
+    was local and which express, so the prompt carried a lookup table of worked
+    examples and a rule for when to use which tool. The corridor is derivable:
+    the route already knows the line and its stops, and the stations table knows
+    which lines each stop serves.
+    """
+    if not route.segments:
+        return None
+    segment = route.segments[0]
+    local_line = segment.line
+    if local_line in EXPRESS_LINES:
+        return None                     # already on the fast one
+
+    destination_express = [l for l in to_st.lines if l in EXPRESS_LINES]
+    if not destination_express:
+        return None
+
+    # The first stop along the way that also serves one of those express lines.
+    for stop in segment.stops[1:]:
+        shared = [l for l in destination_express if l in stop.lines]
+        if shared and stop.id != to_st.id:
+            return stop, local_line, shared
+    return None
+
+
+@tool
+def plan_subway_trip(from_station: str, to_station: str) -> str:
+    """Plan a subway trip, with live arrivals and whether to transfer to an express.
+
+    The single tool for "how do I get from A to B", "what's the fastest way",
+    and "should I stay on the local or transfer to the express". It works out
+    the corridor, the transfer point and the express lines itself.
+
+    Args:
+        from_station: Origin station, e.g. "South Ferry", "23rd St"
+        to_station: Destination station, e.g. "Penn Station", "96th St"
+
+    Returns:
+        The route with real-time next trains, and a local-vs-express comparison
+        when one applies.
+    """
+    from_st = find_station(from_station)
+    to_st = find_station(to_station)
+    if not from_st:
+        return f"Could not find station: {from_station}. Try being more specific."
+    if not to_st:
+        return f"Could not find station: {to_station}. Try being more specific."
+
+    base = get_route_with_arrivals.func(from_station, to_station)
+
+    route = find_route(from_st.name, to_st.name)
+    if not route:
+        return base
+
+    alternative = _express_alternative(from_st, to_st, route)
+    if not alternative:
+        return base
+
+    transfer_stop, local_line, express_lines = alternative
+    comparison = compare_local_vs_express.func(
+        from_station=from_st,
+        to_station=to_st,
+        transfer_station=transfer_stop,
+        local_line=local_line,
+        express_lines=",".join(express_lines),
+    )
+    return f"{base}\n\n{comparison}"
+
+# One tool per question, not one per phrasing. plan_subway_trip replaces
+# get_route, get_route_with_arrivals, compare_local_vs_express and
+# plan_trip_with_transfers, which overlapped enough that the system prompt had
+# to adjudicate between them in sixteen lines of special-case rules.
 ALL_TOOLS = [
-    get_route,
-    get_route_with_arrivals,
+    plan_subway_trip,
     get_train_arrivals,
+    get_transfer_timing,
     get_station_info,
     find_stations_on_line,
     save_preference,
     get_preference,
-    get_common_trips,
-    compare_local_vs_express,
-    plan_trip_with_transfers,
-    get_transfer_timing,
 ]
